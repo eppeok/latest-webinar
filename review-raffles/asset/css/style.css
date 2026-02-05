@@ -1,0 +1,199 @@
+.clear{clear:both;}
+.ticket-dashboard {
+    background: #eee;
+    padding: 0;
+	border:1px solid #eee;
+    width: 100%;
+}
+.ticket-dashboard button.tbtn-button.button {
+    color: #fff;
+    background-color: #bf8864;
+    padding: 12px 35px;
+}
+#generate-random{
+    color: #fff;
+    background-color: #bf8864;
+}
+.ticket-dashboard .ticket-wrapper {
+    padding: 0.5rem 0.5rem 0;
+}
+ul.my-tickets{
+	margin: 0 0 1rem;
+    padding: 0;
+    list-style: none;
+    width: 100%;
+    text-align: center;
+	position:relative;
+}
+ul.my-tickets li{
+	width: 32px;
+    height: 32px;
+    text-align: center;
+    vertical-align: middle;
+    display: inline-block;
+    background: rgba(0,0,0,0);
+    margin: 0 0 7px 0;
+	position:relative;
+}
+ul.my-tickets li label{
+	position:relative;
+	display:block;
+}
+ul.my-tickets li span{
+    text-decoration: none;
+    font-size: 10px;
+    line-height: 32px;
+    vertical-align: middle;
+	position: absolute;
+	top:0;
+    left: 0;
+    right: 0;
+	color:#fff;
+	outline:none;
+	cursor:pointer;
+	background-image: url(seat-white.png);
+    background-size: cover;
+	
+}
+.ticket-dashboard h4 {
+    text-transform: uppercase;
+    font-size: 1rem;
+    text-align: left;
+    margin: 0 0 .5rem;
+	float:left;
+	width:50%;
+}
+.ticket-dashboard .seat-available{
+	text-transform: uppercase;
+    font-size: 1rem;
+    text-align: right;
+    margin: 0 0 .5rem;
+	float:left;
+	width:50%;
+}
+.ticket-dashboard h4 strong{
+	margin-left:1rem;
+	color:#999;
+}
+
+.single-product form.cart .ticket-dashboard .ticket-box{
+	width:100%;
+	border:none;
+	-webkit-appearance: none;
+    -moz-appearance: none;
+	appearance: none;
+    position: relative;
+}
+.single-product form.cart .ticket-dashboard .ticket-box:after{display:none;}
+.ticket-dashboard input[type=checkbox]:focus{
+	outline:none;
+}
+.ticket-dashboard input[type=checkbox]:checked+span {
+    color:#fff;
+	outline-color:#0f5132;
+	background-image: url(seat-green.png);
+}
+/*.ticket-dashboard input[type=checkbox]:disabled+span {
+    color: #000;
+    outline-color: #999;
+    background-image: url(seat-gray.png);
+	cursor:not-allowed;
+}*/
+
+/* === Reserved seat (temporary hold) === */
+.ticket-dashboard input[type=checkbox].rbtn-tt-temp:disabled + span {
+    color: #fff;
+    outline-color: #999;
+    background-image: url(seat-green.png);
+    cursor: not-allowed;
+}
+
+/* === Taken seat (permanently booked) === */
+.ticket-dashboard input[type=checkbox].rbtn-tt-perma:disabled + span {
+    color: #fff;
+    outline-color: #999;
+    background-image: url(seat-gray.png);
+    cursor: not-allowed;
+}
+
+.ticket-dashboard .proceed-cart-info{
+    width: 100%;
+    background: #fff;
+    padding: .5rem;
+    transition: 0.5s all;
+	z-index:999;
+}
+.ticket-dashboard .proceed-cart-info ul{
+	list-style:none;
+	text-align:center;
+	margin:0;
+	padding:0;
+}
+.ticket-dashboard .proceed-cart-info ul li{
+	display:inline-block;
+	margin:0 0.5rem;
+	font-size:1rem;
+}
+.ticket-dashboard span.tbtn{
+	width: 24px;
+    height: 24px;
+    display: inline-block;
+    vertical-align: middle;
+    color: #6faa5a;
+    outline: 2px solid #2f4826;
+    cursor: pointer;
+    background-color: #6faa5a;
+}
+.ticket-dashboard span.tbtn-sold{
+    color: #861919;
+    outline-color: #4b0e0e;
+    background-color: #b62323;
+}
+.ticket-dashboard span.tbtn-selected{
+    color: #69563f;
+    outline-color: #69563f;
+    background-color: #f5c392;
+}
+
+.ticket-dashboard .proceed-cart {
+	display: none;
+    width: 100%;
+    background: #fff;
+    padding: 0.5rem 0;
+    transition: 0.5s all;
+    text-align: center;
+}
+.ticket-dashboard .tbtn-button{
+	float:none !important;
+}
+.ticket-dashboard .prc-qty{
+	font-size:1rem;
+	margin: 0 0 .5rem;
+	
+}
+.list-ticket-avialble{color:#5d5d5d}
+.list-ticket-avialble span{
+	text-transform:capitalize;
+	color:#333;
+}
+.ticket-dashboard input[type=checkbox].wait+span{
+	opacity:0.8;
+}
+.ticket-dashboard input[type=checkbox].wait+span:after{
+	content: "";
+    width: 80%;
+    height: 80%;
+    background: url(loader.gif) no-repeat;
+    position: absolute;
+    left: 10%;
+    top: 10%;
+    z-index: 100;
+    background-size: 100%;
+}
+.availabilitycheck-msg {
+    text-align: center;
+    background: pink;
+    color: red;
+    padding: 5px 15px;
+	display:none;
+}
