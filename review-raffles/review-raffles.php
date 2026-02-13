@@ -5,158 +5,31 @@ Description: Review Raffles – webinar and raffle management plugin for WooComm
 Version: 2.1
 Author: Review Raffles Team
 Author URI: https://www.reviewraffles.com/
-License: GPLv2 or later
-License URI: http://www.gnu.org/licenses/gpl-2.0.html
 Tags: ticket
+
+Copyright (c) ReviewRaffles, LLC. All rights reserved.
+This code is proprietary and subject to the licensing terms agreed upon at issuance.
+Code may not be replicated, redistributed, or re-used without express written permission.
 */
 
-define( 'TWWT_VERSION', '1.6' );
+define( 'TWWT_VERSION', '2.1' );
 define( 'TWWT_PLUGIN', __FILE__ );
 define( 'TWWT_PLUGIN_BASENAME', plugin_basename( TWWT_PLUGIN ) );
 define( 'TWWT_PLUGIN_DIRPATH', plugin_dir_path( TWWT_PLUGIN ) );
-
-/**
- * Ensure "Seat" WooCommerce attribute and term exist
- * Runs on plugin activation
- */
-function twwt_ensure_seat_attribute() {
-
-    if ( ! class_exists( 'WooCommerce' ) ) {
-        return;
-    }
-
-    global $wpdb;
-
-    $attribute_label = 'Seat';
-    $attribute_slug  = 'seat';
-    $taxonomy        = 'pa_' . $attribute_slug;
-
-    //Check if attribute exists
-    $exists = $wpdb->get_var(
-        $wpdb->prepare(
-            "SELECT attribute_id FROM {$wpdb->prefix}woocommerce_attribute_taxonomies WHERE attribute_name = %s",
-            $attribute_slug
-        )
-    );
-
-    //Create attribute if missing
-    if ( ! $exists ) {
-
-        $wpdb->insert(
-            "{$wpdb->prefix}woocommerce_attribute_taxonomies",
-            array(
-                'attribute_name'    => $attribute_slug,
-                'attribute_label'   => $attribute_label,
-                'attribute_type'    => 'select',
-                'attribute_orderby' => 'menu_order',
-                'attribute_public'  => 0,
-            )
-        );
-
-        // Clear attribute cache
-        delete_transient( 'wc_attribute_taxonomies' );
-    }
-
-    //Register taxonomy if not registered yet
-    if ( ! taxonomy_exists( $taxonomy ) ) {
-        register_taxonomy(
-            $taxonomy,
-            array( 'product' ),
-            array(
-                'hierarchical' => false,
-                'show_ui'      => false,
-                'query_var'    => true,
-                'rewrite'      => false,
-            )
-        );
-    }
-
-    //Create default term "Seat" if missing
-    if ( ! term_exists( 'Seat', $taxonomy ) ) {
-        wp_insert_term(
-            'Seat',
-            $taxonomy,
-            array(
-                'slug' => 'seat'
-            )
-        );
-    }
-}
-
-/**
- * Set site timezone to America/New_York on plugin activation
- */
-function twwt_set_default_timezone() {
-
-    // Only set if not already defined
-    $current_tz = get_option( 'timezone_string' );
-
-    if ( empty( $current_tz ) || $current_tz === 'UTC' ) {
-        update_option( 'timezone_string', 'America/New_York' );
-    }
-}
-/**
- * Ensure WooCommerce hides out-of-stock products
- * Runs on plugin activation
- */
-function twwt_enable_hide_out_of_stock_products() {
-
-    // Make sure WooCommerce is active
-    if ( ! class_exists( 'WooCommerce' ) ) {
-        return;
-    }
-
-    if ( get_option('woocommerce_hide_out_of_stock_items') === false ) {
-        update_option('woocommerce_hide_out_of_stock_items', 'yes');
-    }
-
-}
-/**
- * Enable WooCommerce HPOS (High-Performance Order Storage)
- * with compatibility mode ON
- */
-function twwt_enable_hpos_on_install() {
-
-    // WooCommerce must be active
-    if ( ! class_exists( 'WooCommerce' ) ) {
-        return;
-    }
-
-    // HPOS support check (WooCommerce 7.1+)
-    if ( ! function_exists( 'wc_get_container' ) ) {
-        return;
-    }
-
-    // Do NOT override if store owner already chose something
-    $hpos_enabled = get_option( 'woocommerce_custom_orders_table_enabled', null );
-
-    if ( $hpos_enabled === null ) {
-        // Enable HPOS
-        update_option( 'woocommerce_custom_orders_table_enabled', 'yes' );
-
-        // Enable compatibility mode (recommended)
-        update_option( 'woocommerce_custom_orders_table_data_sync_enabled', 'yes' );
-    }
-}
+// Seat hold duration – read from settings (default 10 minutes)
+$twwt_opts = get_option( 'twwt_woo_settings' );
+define( 'TWWT_SEAT_HOLD_SECONDS', max( 60, intval( isset($twwt_opts['seat_hold_minutes']) ? $twwt_opts['seat_hold_minutes'] : 10 ) * 60 ) );
 
 
 register_activation_hook( __FILE__, 'twwt_plugin_activate' );
 function twwt_plugin_activate() {
-    // Set site timezone
-    twwt_set_default_timezone();
-
-    // Ensure Seat attribute exists
-    twwt_ensure_seat_attribute();
-
-    // Enable hide out-of-stock products
-    twwt_enable_hide_out_of_stock_products();
-
-    // Enable HPOS with compatibility mode
-    twwt_enable_hpos_on_install();
-
     // Schedule daily batch job
     if (function_exists('twwt_schedule_daily_batch')) {
         twwt_schedule_daily_batch();
+    }
+    // Schedule temp seat cleanup every 10 minutes
+    if ( ! wp_next_scheduled( 'twwt_cleanup_temp_seats_hook' ) ) {
+        wp_schedule_event( time(), 'twwt_every_10_min', 'twwt_cleanup_temp_seats_hook' );
     }
 }
 
@@ -165,8 +38,55 @@ function twwt_plugin_deactivate() {
     if (wp_next_scheduled('twwt_daily_batch_hook')) {
         wp_clear_scheduled_hook('twwt_daily_batch_hook');
     }
+    wp_clear_scheduled_hook( 'twwt_cleanup_temp_seats_hook' );
 }
 
+// Custom cron interval: every 10 minutes
+add_filter( 'cron_schedules', 'twwt_add_cron_intervals' );
+function twwt_add_cron_intervals( $schedules ) {
+    $schedules['twwt_every_10_min'] = array(
+        'interval' => 600,
+        'display'  => __( 'Every 10 Minutes' ),
+    );
+    return $schedules;
+}
+
+// Cron handler: delete all expired temp_booked_seat_* entries
+add_action( 'twwt_cleanup_temp_seats_hook', 'twwt_cleanup_expired_temp_seats' );
+function twwt_cleanup_expired_temp_seats() {
+    global $wpdb;
+    $cutoff = time() - TWWT_SEAT_HOLD_SECONDS;
+    $wpdb->query( $wpdb->prepare(
+        "DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE %s AND CAST(meta_value AS UNSIGNED) < %d",
+        'temp\_booked\_seat\_%',
+        $cutoff
+    ) );
+}
+
+// Also schedule on init if activation hook was missed (e.g. plugin already active)
+add_action( 'init', 'twwt_ensure_temp_cleanup_scheduled' );
+function twwt_ensure_temp_cleanup_scheduled() {
+    if ( ! wp_next_scheduled( 'twwt_cleanup_temp_seats_hook' ) ) {
+        wp_schedule_event( time(), 'twwt_every_10_min', 'twwt_cleanup_temp_seats_hook' );
+    }
+}
+
+
+// One-time stock recalculation for all webinar variations (runs once on admin init)
+add_action( 'admin_init', 'twwt_one_time_stock_recalc' );
+function twwt_one_time_stock_recalc() {
+    if ( get_option( 'twwt_stock_recalc_v4_done' ) ) { return; }
+    update_option( 'twwt_stock_recalc_v4_done', 1 );
+
+    global $wpdb;
+    // Find all variations that have at least one perma_booked_seat
+    $variation_ids = $wpdb->get_col(
+        "SELECT DISTINCT post_id FROM {$wpdb->postmeta} WHERE meta_key LIKE 'perma\_booked\_seat\_%'"
+    );
+    foreach ( $variation_ids as $vid ) {
+        twwt_recalculate_variation_stock( intval( $vid ) );
+    }
+}
 
 register_activation_hook( __FILE__, 'my_plugin_create_winner_page' );
 function my_plugin_create_winner_page() {
@@ -175,7 +95,7 @@ function my_plugin_create_winner_page() {
         $winner_page_id = wp_insert_post(
             array(
                 'post_title'   => 'Winner',
-                'post_content' => '[my_shortcode]',
+                'post_content' => '<!-- wp:shortcode -->[my_shortcode]<!-- /wp:shortcode -->',
                 'post_status'  => 'publish',
                 'post_type'    => 'page',
                 'post_name'    => 'winner'
@@ -183,19 +103,69 @@ function my_plugin_create_winner_page() {
         );
     }
 
-    // Ensure the twilio_log table exists on activation
+    // Create "Webinar" product category if it doesn't exist and set as default
+    if ( taxonomy_exists( 'product_cat' ) || class_exists( 'WooCommerce' ) ) {
+        $webinar_term = term_exists( 'Webinar', 'product_cat' );
+        if ( ! $webinar_term ) {
+            $webinar_term = wp_insert_term( 'Webinar', 'product_cat', array(
+                'slug' => 'webinar',
+            ) );
+        }
+        if ( ! is_wp_error( $webinar_term ) ) {
+            $term_id = is_array( $webinar_term ) ? $webinar_term['term_id'] : $webinar_term;
+            $settings = get_option( 'twwt_woo_settings', array() );
+            if ( empty( $settings['default_webinar_category'] ) ) {
+                $settings['default_webinar_category'] = intval( $term_id );
+                update_option( 'twwt_woo_settings', $settings );
+            }
+        }
+    }
+
     if ( function_exists('twwt_ensure_twilio_log_table_exists') ) {
         twwt_ensure_twilio_log_table_exists();
     } else {
-        // Fallback: attempt to call it (function is defined in this file so this should succeed)
         twwt_ensure_twilio_log_table_exists();
     }
 
 }
 
-/**
- * Ensure the twilio_log table exists. Safe to call multiple times.
- */
+// Ensure "Webinar" category exists (runs once, for sites where activation hook already fired)
+add_action( 'init', 'twwt_ensure_webinar_category_exists' );
+function twwt_ensure_webinar_category_exists() {
+    if ( get_option( 'twwt_webinar_cat_created' ) ) {
+        return;
+    }
+    if ( ! taxonomy_exists( 'product_cat' ) ) {
+        return;
+    }
+    update_option( 'twwt_webinar_cat_created', 1 );
+
+    $webinar_term = term_exists( 'Webinar', 'product_cat' );
+    if ( ! $webinar_term ) {
+        $webinar_term = wp_insert_term( 'Webinar', 'product_cat', array( 'slug' => 'webinar' ) );
+    }
+    if ( ! is_wp_error( $webinar_term ) ) {
+        $term_id  = is_array( $webinar_term ) ? $webinar_term['term_id'] : $webinar_term;
+        $settings = get_option( 'twwt_woo_settings', array() );
+        if ( empty( $settings['default_webinar_category'] ) ) {
+            $settings['default_webinar_category'] = intval( $term_id );
+            update_option( 'twwt_woo_settings', $settings );
+        }
+    }
+}
+
+// Ensure winner page always contains the shortcode (handles block editor edits)
+add_action( 'init', 'twwt_ensure_winner_page_shortcode' );
+function twwt_ensure_winner_page_shortcode() {
+    $page = get_page_by_path( 'winner' );
+    if ( $page && strpos( $page->post_content, '[my_shortcode]' ) === false ) {
+        wp_update_post( array(
+            'ID'           => $page->ID,
+            'post_content' => '<!-- wp:shortcode -->[my_shortcode]<!-- /wp:shortcode -->',
+        ) );
+    }
+}
+
 function twwt_ensure_twilio_log_table_exists() {
     global $wpdb;
 
@@ -213,19 +183,17 @@ function twwt_ensure_twilio_log_table_exists() {
       PRIMARY KEY  (id)
     ) {$collate};";
 
-    // Use direct query; dbDelta isn't required for a simple IF NOT EXISTS create
     $wpdb->query($sql);
 }
 
 function custom_add_to_cart_redirect($url) {
     if (!empty($_REQUEST['add-to-cart'])) {
-        return wc_get_cart_url(); // Redirect to the cart page
+        return wc_get_cart_url(); 
     }
     return $url;
 }
 add_filter('woocommerce_add_to_cart_redirect', 'custom_add_to_cart_redirect');
 
-// Disable AJAX add to cart buttons on archives
 function custom_disable_ajax_add_to_cart($link, $product) {
     if (is_post_type_archive('product')) {
         return str_replace('ajax_add_to_cart', 'add_to_cart_button', $link);
@@ -237,17 +205,15 @@ add_filter('woocommerce_loop_add_to_cart_link', 'custom_disable_ajax_add_to_cart
 function delete_custom_page_on_deactivation() {
     $page_slug = 'winner';
 	$page = get_page_by_path($page_slug);
-	$WinnerPageId = $page->ID;
-    
-    if ( $WinnerPageId ) {
-        wp_delete_post( $WinnerPageId, true );
-    }
+	if ( $page ) {
+		$WinnerPageId = $page->ID;
+		if ( $WinnerPageId ) {
+			wp_delete_post( $WinnerPageId, true );
+		}
+	}
 }
 register_deactivation_hook( __FILE__, 'delete_custom_page_on_deactivation' );
 
-/* ---------------------------------------------------------------------------
-   Seats/Stock helpers
---------------------------------------------------------------------------- */
 function twwt_count_perma_booked_seats( $variation_id ){
     global $wpdb;
     $like = $wpdb->esc_like('perma_booked_seat_') . '%';
@@ -258,30 +224,85 @@ function twwt_count_perma_booked_seats( $variation_id ){
 }
 
 /**
- * Recalculate a variation's stock from:
- *   available = max_seats - perma_booked_seats
- * Uses _variable_text_field (your "Maximum Seats") as max_seats.
+ * HPOS-compatible helper: get all paid order IDs that contain a given product.
+ * Works with both WC HPOS (wp_wc_orders) and legacy (wp_posts) storage.
  */
+function twwt_get_paid_order_ids_for_product( $product_id ) {
+    global $wpdb;
+    $product_id = intval( $product_id );
+    if ( ! $product_id ) { return array(); }
+
+    // Get candidate order IDs from order items table (exists in both HPOS and legacy)
+    $candidate_ids = $wpdb->get_col( $wpdb->prepare(
+        "SELECT DISTINCT i.order_id
+         FROM {$wpdb->prefix}woocommerce_order_items AS i
+         INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta AS im ON i.order_item_id = im.order_item_id
+         WHERE im.meta_key = '_product_id' AND im.meta_value = %d",
+        $product_id
+    ) );
+
+    if ( empty( $candidate_ids ) ) { return array(); }
+
+    // Filter to only paid orders using WC API (works with HPOS and legacy)
+    $paid_statuses = wc_get_is_paid_statuses();
+    $order_ids = array();
+    foreach ( $candidate_ids as $oid ) {
+        $order = wc_get_order( $oid );
+        if ( $order && in_array( $order->get_status(), $paid_statuses, true ) ) {
+            $order_ids[] = (int) $oid;
+        }
+    }
+    return $order_ids;
+}
+
 function twwt_recalculate_variation_stock( $variation_id ){
+    global $wpdb;
+
     $max = (int) get_post_meta( $variation_id, '_variable_text_field', true );
     if ( $max <= 0 ) { return; }
 
     $booked    = twwt_count_perma_booked_seats( $variation_id );
     $available = max( 0, $max - $booked );
 
-    $variation = wc_get_product( $variation_id );
-    if ( $variation && $variation->is_type('variation') ) {
-        $variation->set_manage_stock( true );
-        $variation->set_backorders( 'no' );
-        $variation->set_stock_quantity( $available );
-        $variation->set_stock_status( $available > 0 ? 'instock' : 'outofstock' );
-        $variation->save();
-        wc_delete_product_transients( $variation_id );
+    // Update variation stock directly via post meta (bypasses product type issues)
+    update_post_meta( $variation_id, '_manage_stock', 'yes' );
+    update_post_meta( $variation_id, '_backorders', 'no' );
+    update_post_meta( $variation_id, '_stock', $available );
+    update_post_meta( $variation_id, '_stock_status', $available > 0 ? 'instock' : 'outofstock' );
+    wc_delete_product_transients( $variation_id );
+
+    // Find parent product
+    $parent_id = wp_get_post_parent_id( $variation_id );
+    if ( ! $parent_id ) { return $available; }
+
+    // Ensure parent product has correct 'variable' product type term
+    // (WC sometimes loads it as 'simple' due to stale term cache)
+    if ( ! has_term( 'variable', 'product_type', $parent_id ) ) {
+        wp_set_object_terms( $parent_id, 'variable', 'product_type', false );
+        wc_delete_product_transients( $parent_id );
     }
+
+    // Check if ALL variations for this parent are out of stock
+    $in_stock_count = (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(1) FROM {$wpdb->postmeta}
+         WHERE meta_key = '_stock_status' AND meta_value = 'instock'
+         AND post_id IN (
+            SELECT ID FROM {$wpdb->posts} WHERE post_parent = %d AND post_type = 'product_variation'
+         )",
+        $parent_id
+    ) );
+
+    $parent_status = $in_stock_count > 0 ? 'instock' : 'outofstock';
+    update_post_meta( $parent_id, '_stock_status', $parent_status );
+    // Also update via WC if possible
+    WC_Product_Variable::sync_stock_status( $parent_id );
+    wc_delete_product_transients( $parent_id );
+    // Clear WC object cache so admin list picks up the change
+    clean_post_cache( $parent_id );
+
     return $available;
 }
 
-/** Human message for non-opted-in cases */
 function twwt_ottertext_block_reason($code) {
     switch ((string)$code) {
         case '1': return 'OtterText: customer exists but has not confirmed yet (New Customer). Opt-in SMS was sent.';
@@ -293,9 +314,6 @@ function twwt_ottertext_block_reason($code) {
 }
 
 
-/* ---------------------------------------------------------------------------
-   OtterText sender
---------------------------------------------------------------------------- */
 function wp_ottertext_sms($to_mobile, $msg){
     $settings = get_option('twwt_woo_settings');
     $api_key  = isset($settings['ottertext_api_key']) ? trim($settings['ottertext_api_key']) : '';
@@ -303,16 +321,12 @@ function wp_ottertext_sms($to_mobile, $msg){
 
     if ($api_key === '' || $to_mobile === '' || $msg === '') { return; }
 
-    // Normalize to E.164 (+1XXXXXXXXXX). Your screenshot shows raw 6146491554.
     $e164 = twwt_normalize_us_phone($to_mobile);
     if (!$e164) {
-        //twwt_twilio_log($to_mobile, $msg, 'Invalid US phone format', 0, 'ottertext');
         return;
     }
 
-    // 1) Check current opt-in status
-    $status = twwt_ottertext_get_optin_status($e164, $partner, $api_key); // '1'..'5' or ''
-    // Store a quick stamp on the user if we can find them
+    $status = twwt_ottertext_get_optin_status($e164, $partner, $api_key);
     $user_query = new WP_User_Query([
         'meta_key'   => 'billing_phone',
         'meta_value' => $to_mobile,
@@ -328,10 +342,7 @@ function wp_ottertext_sms($to_mobile, $msg){
         update_user_meta($user->ID, 'ottertext_optin_last_checked', current_time('mysql'));
     }
 
-    // 2) If not opted-in, try to add/update the customer to trigger OtterText opt-in,
-    //    then log and exit gracefully (no send).
     if ($status !== '3') {
-        // Try to create/update customer on OtterText (fires their confirmation SMS)
         $first = $user ? get_user_meta($user->ID, 'billing_first_name', true) : '';
         $last  = $user ? get_user_meta($user->ID, 'billing_last_name', true)  : '';
         $email = $user ? ($user->user_email ?? '') : '';
@@ -339,22 +350,18 @@ function wp_ottertext_sms($to_mobile, $msg){
 
         $add = twwt_ottertext_add_customer($e164, $first, $last, $email, $zip, $partner, $api_key);
 
-        // Status/message to log
         $reason = twwt_ottertext_block_reason($status);
         $logMsg = $add['ok']
             ? $reason
             : $reason . ' | add_customer failed: ' . $add['body'];
-
-        //twwt_twilio_log($e164, $msg, $logMsg, 0, 'ottertext');
         return; // DO NOT attempt to send (TCPA)
     }
 
-    // 3) Opted-in → send now
     $endpoint = 'https://app.ottertext.com/api/customers/sendmessage';
     $body = array(
         'customer'   => $e164,
-        'sms_or_mms' => '1',     // 1 = SMS
-        'send_type'  => '1',     // 1 = instant
+        'sms_or_mms' => '1',
+        'send_type'  => '1',
         'partner'    => $partner,
         'message'    => $msg
     );
@@ -369,7 +376,6 @@ function wp_ottertext_sms($to_mobile, $msg){
     ));
 
     if (is_wp_error($response)) {
-        //twwt_twilio_log($e164, $msg, $response->get_error_message(), 0, 'ottertext');
         return;
     }
 
@@ -377,13 +383,61 @@ function wp_ottertext_sms($to_mobile, $msg){
     $raw  = wp_remote_retrieve_body($response);
 
     if ($code >= 200 && $code < 300) {
-        //twwt_twilio_log($e164, $msg, $raw, 1, 'ottertext');
         return $raw;
     } else {
-        //twwt_twilio_log($e164, $msg, $raw, 0, 'ottertext');
         return;
     }
 }
+
+function wp_aiq_sms($to_mobile, $msg) {
+
+    $settings = get_option('twwt_woo_settings');
+    $api_key  = isset($settings['aiq_api_key']) ? trim($settings['aiq_api_key']) : '';
+
+    if (empty($api_key) || empty($to_mobile) || empty($msg)) {
+        return false;
+    }
+
+    $phone = preg_replace('/\D+/', '', $to_mobile);
+    if (strlen($phone) === 10) {
+        $phone = '1' . $phone;
+    }
+
+    $endpoint = 'https://api.alpineiq.com/api/v2/sms';
+
+    $response = wp_remote_post(
+        $endpoint,
+        array(
+            'timeout' => 15,
+            'headers' => array(
+                'X-APIKEY'     => $api_key,
+                'Accept'       => 'application/json',
+                'Content-Type' => 'application/json',
+            ),
+            'body' => wp_json_encode(array(
+                'phone' => $phone,
+                'body'  => $msg,
+            )),
+        )
+    );
+
+    if (is_wp_error($response)) {
+        twwt_twilio_log($phone, $msg, $response->get_error_message(), 0, 'aiq');
+        return false;
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    $body        = wp_remote_retrieve_body($response);
+
+    if ($status_code >= 200 && $status_code < 300) {
+        //twwt_twilio_log($phone, $msg, $body, 1, 'aiq');
+    } else {
+        //twwt_twilio_log($phone, $msg, $body, 0, 'aiq');
+    }
+
+    return $body;
+}
+
 
 #Twilio
 require_once 'vendor/autoload.php';
@@ -391,9 +445,21 @@ use Twilio\Rest\Client;
 function wp_twilio_sms($to_mobile, $msg){
     $settings = get_option( 'twwt_woo_settings' );
 
-    // Route to OtterText if chosen
-    if (isset($settings['sms_provider']) && $settings['sms_provider'] === 'ottertext') {
-        return wp_ottertext_sms($to_mobile, $msg);
+    if (!empty($settings['sms_provider'])) {
+
+        if ($settings['sms_provider'] === 'ottertext') {
+            if (function_exists('wp_ottertext_sms')) {
+                error_log('SMS PROVIDER USED: ottertext');
+                return wp_ottertext_sms($to_mobile, $msg);
+            }
+        }
+
+        if ($settings['sms_provider'] === 'aiq') {
+            error_log('SMS PROVIDER USED: aiq');
+            return wp_aiq_sms($to_mobile, $msg);
+        }
+        error_log('SMS PROVIDER USED: twilio');
+
     }
 
     $sid   = isset($settings['twilio_sid'])   ? $settings['twilio_sid']   : '';
@@ -416,43 +482,31 @@ function wp_twilio_sms($to_mobile, $msg){
             array("body" => $msg, "from" => $settings['twilio_from'])
         );
         //twwt_twilio_log($to_mobile, $msg, $response, 1, 'twilio');
+        //error_log('SMS PROVIDER USED: ' . ($settings['sms_provider'] ?? 'twilio'));
         return $response;
     } catch(Exception $ex){
         //twwt_twilio_log($to_mobile, $msg, $ex, 0, 'twilio');
         return;
     }
 }
-/**
- * === OtterText Bulk Sync (auto-push Woo customers & store opt-in) ===
- * Paste this block after the Twilio/OtterText sender functions.
- */
 
-/** Normalize US numbers to +1XXXXXXXXXX (returns '' if invalid/non-US). */
 function twwt_normalize_us_phone($raw) {
     $raw = trim((string) $raw);
     if ($raw === '') {
         return '';
     }
 
-    // Keep only digits
     $digits = preg_replace('/\D+/', '', $raw);
 
-    // If it starts with 1 and is longer than 10, keep the last 10 digits
     if (substr($digits, 0, 1) === '1' && strlen($digits) > 10) {
         $digits = substr($digits, -10);
     }
-
-    // If we still don't have exactly 10 digits, treat as invalid
     if (strlen($digits) !== 10) {
         return '';
     }
-
-    // Return E.164 US format
     return '+1' . $digits;
 }
 
-
-/** Add/Update a customer on OtterText (triggers opt-in SMS for new). */
 function twwt_ottertext_add_customer($phone_e164, $first, $last, $email, $zip, $partner, $api_key) {
     if (!$phone_e164 || !$api_key || !$partner) {
         return array('ok' => false, 'code' => 0, 'body' => 'Missing required params');
@@ -482,7 +536,6 @@ function twwt_ottertext_add_customer($phone_e164, $first, $last, $email, $zip, $
     );
 }
 
-/** Query the customer's current opt-in status; returns '1'..'5' or ''. */
 function twwt_ottertext_get_optin_status($phone_e164, $partner, $api_key) {
     if (!$phone_e164 || !$api_key || !$partner) return '';
     $url = add_query_arg(array(
@@ -499,30 +552,19 @@ function twwt_ottertext_get_optin_status($phone_e164, $partner, $api_key) {
     return !empty($body['customer']['optincheck']) ? (string)$body['customer']['optincheck'] : '';
 }
 
-/** Batch sync Woo users → OtterText (US numbers only). Saves opt-in on user. */
-// new modification
-/** Batch sync Woo users → OtterText (US numbers only).
- *  - Only users with twwy_opt_notification = 1
- *  - Every run re-triggers OtterText opt-in SMS for users NOT approved yet
- *    (status !== 3 and !== 4).
- *  - Returns an array of stats for the admin notice.
- */
 function twwt_ottertext_batch_sync() {
     $opts     = get_option('twwt_woo_settings');
     $api_key  = isset($opts['ottertext_api_key']) ? trim($opts['ottertext_api_key']) : '';
     $partner  = isset($opts['ottertext_partner']) ? trim($opts['ottertext_partner']) : 'WordPress';
 
-    // If misconfigured, bail with an error message
     if (!$api_key || !$partner) {
         return array(
             'error' => 'Missing OtterText API key or partner. Please check Review Raffles → Settings → SMS Provider.'
         );
     }
-
-    // Stats we’ll show to the admin
     $stats = array(
         'total_users'           => 0,
-        'eligible'              => 0,  // opted-in locally
+        'eligible'              => 0,
         'skipped_local_optout'  => 0,
         'invalid_phone'         => 0,
         'already_opted_in'      => 0,
@@ -531,9 +573,7 @@ function twwt_ottertext_batch_sync() {
         'errors'                => 0,
     );
 
-    // Pull users in manageable chunks
     $user_query = new WP_User_Query(array(
-        // 'role__in' => array('customer','subscriber'), // uncomment if you want to limit by role
         'fields'   => array('ID'),
         'number'   => 500,
         'paged'    => 1,
@@ -549,7 +589,6 @@ function twwt_ottertext_batch_sync() {
         $uid = is_object($u) ? $u->ID : (int) $u;
         $stats['total_users']++;
 
-        // Only sync users who opted in on your site
         $local_optin = get_user_meta($uid, 'twwy_opt_notification', true);
         if ($local_optin != '1') {
             $stats['skipped_local_optout']++;
@@ -561,7 +600,7 @@ function twwt_ottertext_batch_sync() {
         $e164  = twwt_normalize_us_phone($phone);
         if (!$e164) {
             $stats['invalid_phone']++;
-            continue; // skip invalid/non-US
+            continue;
         }
 
         $first = get_user_meta($uid, 'billing_first_name', true);
@@ -570,12 +609,8 @@ function twwt_ottertext_batch_sync() {
         $email = $user_obj ? $user_obj->user_email : '';
         $zip   = get_user_meta($uid, 'billing_postcode', true);
 
-        // 1) Check current opt-in status in OtterText
         $status_before = twwt_ottertext_get_optin_status($e164, $partner, $api_key);
 
-        // 2) Decide whether to call add_customer (which sends opt-in SMS)
-        //    We ONLY re-trigger for users who are NOT approved:
-        //    - Not Opted In (3) and not Opted Out (4)
         $should_add = ($status_before !== '3' && $status_before !== '4');
 
         if ($status_before === '3') {
@@ -592,11 +627,8 @@ function twwt_ottertext_batch_sync() {
             } else {
                 $stats['errors']++;
             }
-
-            // Re-check status after add/update
             $opt = twwt_ottertext_get_optin_status($e164, $partner, $api_key);
         } else {
-            // Already Opted In or Opted Out – do not send opt-in SMS again
             $add = array(
                 'ok'   => true,
                 'code' => 200,
@@ -605,25 +637,22 @@ function twwt_ottertext_batch_sync() {
             $opt = $status_before;
         }
 
-        // 3) Save the latest status to user meta for admin display
         if ($opt !== '') {
             update_user_meta($uid, 'ottertext_optincheck', $opt);
             update_user_meta($uid, 'ottertext_phone', $e164);
             update_user_meta($uid, 'ottertext_last_sync', current_time('mysql'));
         }
 
-        // 4) Log what happened (for debugging in twilio_log table)
         if (function_exists('twwt_twilio_log')) {
             $log_msg = 'Bulk sync: status_before=' . $status_before . ' status_after=' . $opt;
             if (empty($add['ok'])) {
                 $log_msg .= ' | add_customer_error=' . $add['body'];
             }
-            //twwt_twilio_log($e164, 'OtterText bulk add', $log_msg, !empty($add['ok']) ? 1 : 0, 'ottertext-import');
         }
 
         $processed++;
         if ($processed % 25 === 0) {
-            sleep(1); // gentle throttling
+            sleep(1); 
         }
     }
 
@@ -631,10 +660,6 @@ function twwt_ottertext_batch_sync() {
 }
 
 
-
-
-
-/** Add custom cron schedule for every 5 minutes */
 add_filter('cron_schedules', function($schedules) {
     $schedules['every_five_minutes'] = array(
         'interval' => 300, // 300 seconds = 5 minutes
@@ -643,16 +668,13 @@ add_filter('cron_schedules', function($schedules) {
     return $schedules;
 });
 
-/** Schedule the event if not already scheduled */
 if (!wp_next_scheduled('twwt_ottertext_cron')) {
     wp_schedule_event(time() + 300, 'every_five_minutes', 'twwt_ottertext_cron');
 }
 
-/** Hook the cron job to your function */
+
 add_action('twwt_ottertext_cron', 'twwt_ottertext_batch_sync');
 
-
-/** Optional: Tools → OtterText Sync manual trigger (admin only). */
 add_action('admin_menu', function () {
     add_submenu_page(
         'tools.php',
@@ -668,7 +690,6 @@ add_action('admin_menu', function () {
             if (isset($_POST['twwt_run_sync']) && check_admin_referer('twwt_run_sync')) {
                 $stats = twwt_ottertext_batch_sync();
 
-                // Show a nice summary box
                 if (isset($stats['error'])) {
                     echo '<div class="notice notice-error"><p><strong>OtterText Sync Error:</strong> ' . esc_html($stats['error']) . '</p></div>';
                 } else {
@@ -704,9 +725,7 @@ function twwt_twilio_log($phone_number, $message, $response, $type, $provider = 
     global $wpdb;
     $response = serialize($response);
     $table = $wpdb->prefix.'twilio_log';
-    // Ensure the table exists (handles cases where plugin was not properly activated)
     if ( ! function_exists('twwt_ensure_twilio_log_table_exists') ) {
-        // If helper somehow missing, attempt a safe create inline
         twwt_ensure_twilio_log_table_exists();
     } else {
         twwt_ensure_twilio_log_table_exists();
@@ -721,25 +740,18 @@ function twwt_twilio_log($phone_number, $message, $response, $type, $provider = 
         'date_added'   => @gmdate('Y-m-d H:i:s')
     );
 
-    // Match formats to the $data columns (6 columns)
     $format = array('%s', '%s', '%s', '%d', '%s', '%s');
     $wpdb->insert($table, $data, $format);
 
     return $wpdb->insert_id;
 }
-#Twilio
 
-/*CREATE ADMIN MENU*/
-/*
- * Add our Custom Fields to simple products
- */
 function twwt_woo_add_custom_fields() {
 
 	global $woocommerce, $post;
 
 	echo '<div class="options_group">';
 
- 	// Text Field
 	woocommerce_wp_text_input(
 		array(
 			'id'          => '_text_field',
@@ -750,7 +762,6 @@ function twwt_woo_add_custom_fields() {
 		)
  	);
 
- 	// Number Field
 	woocommerce_wp_text_input(
  		array(
  			'id'                => '_number_field',
@@ -826,9 +837,6 @@ function twwt_woo_add_custom_fields() {
 }
 
 
-/*
- * Add our Custom Fields to variable products
- */
 function twwt_woo_add_custom_variation_fields( $loop, $variation_data, $variation ) {
 
 
@@ -850,7 +858,7 @@ function twwt_woo_add_custom_variation_fields( $loop, $variation_data, $variatio
 			)
 	 	);
 
-		// Add extra custom fields here as necessary...
+		
 
 		echo '</div>';
 
@@ -866,15 +874,14 @@ add_action( 'woocommerce_variation_options_pricing', 'twwt_woo_add_custom_variat
 //add_action( 'woocommerce_variation_options_download', 'twwt_woo_add_custom_variation_fields', 10, 3 ); // After Download fields
 //add_action( 'woocommerce_product_after_variable_attributes', 'twwt_woo_add_custom_variation_fields', 10, 3 ); // After all Variation fields
 
-/*
- * Save our variable product fields
- */
+
 function twwt_woo_add_custom_variation_fields_save( $post_id ){
-
+	if ( ! isset($_POST['_variable_text_field'][ $post_id ]) ) {
+		return;
+	}
  	// Text Field
- 	$woocommerce_text_field = $_POST['_variable_text_field'][ $post_id ];
-	update_post_meta( $post_id, '_variable_text_field', esc_attr( $woocommerce_text_field ) );
-
+ 	$woocommerce_text_field = sanitize_text_field( $_POST['_variable_text_field'][ $post_id ] );
+	update_post_meta( $post_id, '_variable_text_field', $woocommerce_text_field );
 }
 add_action( 'woocommerce_save_product_variation', 'twwt_woo_add_custom_variation_fields_save', 10, 2 );
 
@@ -899,12 +906,12 @@ function custom_single_product_summary() {
 			
 		}
 		else{
-			if( current_user_can('editor') || current_user_can('admstrator') ) {
+			if( current_user_can('editor') || current_user_can('administrator') ) {
 				$page_slug = 'winner';
 				$page = get_page_by_path($page_slug);
 				$Winnerpermalink = get_permalink($page->ID);
 				?>
-				<p class="mt-4 mb-0"><a target="_blank" href="<?php echo $Winnerpermalink;?>?pid=<?php echo $product_id;?>" class="btn btn-winner">Select Attendee</a></p>
+				<p class="mt-4 mb-0"><a target="_blank" href="<?php echo esc_url( add_query_arg( 'pid', $product_id, $Winnerpermalink ) ); ?>" class="btn btn-winner">Select Attendee</a></p>
 				<?php
 			}
 		}
@@ -915,10 +922,10 @@ function twwt_woo_scripts(){
 	wp_enqueue_style( 'twwt_woo', plugins_url('asset/css/style.css',__FILE__ ), array(), TWWT_VERSION );
 	wp_enqueue_script( 'twwt_woo_js', plugins_url('asset/js/main.js',__FILE__ ), array('jquery'), TWWT_VERSION, true );
 	
-	//passing variables to the javascript file
 	wp_localize_script('twwt_woo_js', 'twwtfa', array(
 		'ajaxurl' => admin_url( 'admin-ajax.php' ),
-		'nonce' => wp_create_nonce('ajax_nonce')
+		'nonce' => wp_create_nonce('ajax_nonce'),
+		'hold_minutes' => intval( TWWT_SEAT_HOLD_SECONDS / 60 ),
 	));
 }
 add_action( 'wp_enqueue_scripts', 'twwt_woo_scripts' );
@@ -929,6 +936,53 @@ function twwt_woo_ajax_function(){
 
 add_action( 'wp_ajax_nopriv_twwt_woo_ajax_function', 'twwt_woo_ajax_function' );
 add_action( 'wp_ajax_twwt_woo_ajax_function', 'twwt_woo_ajax_function' );
+
+/**
+ * AJAX endpoint: return all seat statuses for a product (used by live polling).
+ * Response: { "variation_id": { "seat_number": "perma"|"temp"|"" }, ... }
+ */
+add_action( 'wp_ajax_twwt_seat_status', 'twwt_seat_status_ajax' );
+add_action( 'wp_ajax_nopriv_twwt_seat_status', 'twwt_seat_status_ajax' );
+function twwt_seat_status_ajax() {
+	$product_id = isset($_GET['product_id']) ? absint($_GET['product_id']) : 0;
+	if ( ! $product_id ) {
+		wp_send_json_error('Missing product_id');
+	}
+
+	$product = wc_get_product( $product_id );
+	if ( ! $product ) {
+		wp_send_json_error('Invalid product');
+	}
+
+	$variation_ids = $product->get_children();
+	if ( empty($variation_ids) ) {
+		$variation_ids = get_posts( array(
+			'post_parent'  => $product_id,
+			'post_type'    => 'product_variation',
+			'post_status'  => array( 'publish', 'private' ),
+			'fields'       => 'ids',
+			'numberposts'  => -1,
+		) );
+	}
+
+	$result = array();
+	foreach ( $variation_ids as $vid ) {
+		$max_seat = intval( get_post_meta( $vid, '_variable_text_field', true ) );
+		$booked  = twwt_count_perma_booked_seats( $vid );
+		$seats = array();
+		for ( $i = 1; $i <= $max_seat; $i++ ) {
+			$avail = twwt_woo_get_availability_v2( $vid, $i );
+			$seats[ $i ] = isset($avail['type']) ? $avail['type'] : '';
+		}
+		$result[ $vid ] = array(
+			'seats'     => $seats,
+			'total'     => $max_seat,
+			'available' => max( 0, $max_seat - $booked ),
+		);
+	}
+
+	wp_send_json_success( $result );
+}
 
 
 function get_available_ticket_count($product_id){
@@ -949,22 +1003,26 @@ function get_variation_price_by_id($product_id, $variation_id){
 	$currency_symbol = get_woocommerce_currency_symbol();
 	$product = new WC_Product_Variable($product_id);
 	$variations = $product->get_available_variations();
-	$var_data = array();
+	$display_regular_price = '';
+	$display_price = '';
+	$variation_name = '';
 	foreach ($variations as $variation) {
 		if($variation['variation_id'] == $variation_id){
-			
 			$display_regular_price = '<span class="currency">'. $currency_symbol .'</span>'.$variation['display_regular_price'];
 			$display_price = '<span class="currency">'. $currency_symbol .'</span>'.$variation['display_price'];
 			$variation_name = implode(' ', $variation['attributes']);
-			$ticket_left = $variation['max_qty'];
 		}
 	}
- 
-	//Check if Regular price is equal with Sale price (Display price)
+
+	// Compute available seats directly from perma_booked_seat meta (source of truth)
+	$max = (int) get_post_meta( $variation_id, '_variable_text_field', true );
+	$booked = twwt_count_perma_booked_seats( $variation_id );
+	$ticket_left = max( 0, $max - $booked );
+
 	if ($display_regular_price == $display_price){
 		$display_price = false;
 	}
- 
+
 	$priceArray = array(
 		'display_regular_price' => $display_regular_price,
 		'display_price' => $display_price,
@@ -976,39 +1034,90 @@ function get_variation_price_by_id($product_id, $variation_id){
 }
 
 /**
- * Validate our custom text input field value
+ * Atomically reserve a single seat using INSERT ... SELECT.
+ * Returns true if the seat was successfully reserved, false if already taken.
  */
+function twwt_atomic_reserve_seat( $variation_id, $seat ) {
+    global $wpdb;
+
+    $variation_id = intval( $variation_id );
+    $meta_key_temp  = 'temp_booked_seat_' . $seat;
+    $meta_key_perma = 'perma_booked_seat_' . $seat;
+    $now            = time();
+    $cutoff         = $now - TWWT_SEAT_HOLD_SECONDS;
+
+    // First, clean up any expired temp booking for this specific seat
+    $wpdb->query( $wpdb->prepare(
+        "DELETE FROM {$wpdb->postmeta}
+         WHERE post_id = %d AND meta_key = %s AND CAST(meta_value AS UNSIGNED) < %d",
+        $variation_id, $meta_key_temp, $cutoff
+    ) );
+
+    // Atomic insert: only succeeds if neither a valid temp nor a perma booking exists.
+    // Uses INSERT ... SELECT with a condition that returns 0 rows if seat is taken.
+    $rows = $wpdb->query( $wpdb->prepare(
+        "INSERT INTO {$wpdb->postmeta} (post_id, meta_key, meta_value)
+         SELECT %d, %s, %s FROM DUAL
+         WHERE NOT EXISTS (
+             SELECT 1 FROM {$wpdb->postmeta}
+             WHERE post_id = %d AND meta_key = %s
+         )
+         AND NOT EXISTS (
+             SELECT 1 FROM {$wpdb->postmeta}
+             WHERE post_id = %d AND meta_key = %s AND CAST(meta_value AS UNSIGNED) >= %d
+         )",
+        $variation_id, $meta_key_temp, (string) $now,
+        $variation_id, $meta_key_perma,
+        $variation_id, $meta_key_temp, $cutoff
+    ) );
+
+    return $rows > 0;
+}
+
 function twwt_woo_add_to_cart_validation($passed, $product_id, $quantity, $variation_id = null) {
+    // Ensure we have a variation_id — WC may not pass it if product loaded as simple
+    if ( empty($variation_id) && !empty($_POST['variation_id']) ) {
+        $variation_id = absint($_POST['variation_id']);
+    }
+
     if (!empty($_POST['seat'])) {
-        $booked_seats = $_POST['seat'];
+        $booked_seats = array_map( 'sanitize_text_field', $_POST['seat'] );
 
-        // Check if the count of booked seats matches the quantity
-        if (count($booked_seats) == $quantity) {
-            foreach ($booked_seats as $seat) {
-                $availability = twwt_woo_get_availability($variation_id, $seat);
-
-                // Check seat availability
-                if ($availability) {
-                    $passed = false;
-                    wc_add_notice(__('Selected seat "' . $seat . '" is not available for booking.', 'woocommerce'), 'error');
-                    // No need for the 'break' statement here
-                }
-            }
-        } else {
-            // Quantity and booked seats count don't match
+        if (count($booked_seats) != $quantity) {
             $passed = false;
             wc_add_notice(__('Please try again later.', 'woocommerce'), 'error');
+            return $passed;
+        }
+
+        // Attempt atomic reservation for each seat
+        $reserved = array();
+        foreach ($booked_seats as $seat) {
+            if ( ! preg_match( '/^[a-zA-Z0-9_\-]+$/', $seat ) ) {
+                $passed = false;
+                wc_add_notice(__('Invalid seat identifier.', 'woocommerce'), 'error');
+                break;
+            }
+            if ( ! twwt_atomic_reserve_seat( $variation_id, $seat ) ) {
+                $passed = false;
+                wc_add_notice(__('Selected seat "' . esc_html($seat) . '" is not available for booking.', 'woocommerce'), 'error');
+            } else {
+                $reserved[] = $seat;
+            }
+        }
+
+        // If any seat failed, roll back all successfully reserved seats
+        if ( ! $passed && ! empty( $reserved ) ) {
+            foreach ( $reserved as $seat ) {
+                delete_post_meta( $variation_id, 'temp_booked_seat_' . $seat );
+            }
         }
     }
 
     if ($passed) {
         if (!WC()->cart->is_empty()) {
-            // Loop through the cart items and remove items with specific conditions
             foreach (WC()->cart->get_cart() as $cart_item_key => $cart_item) {
                 $product_id_n = $cart_item['product_id'];
-                $variation_id_n = $cart_item['variation_id'];
 
-                // Check if the product has specific conditions for removal
                 if (twwt_woo_product_seat($product_id_n)) {
                     if ($product_id_n == $product_id) {
                         WC()->cart->remove_cart_item($cart_item_key);
@@ -1017,60 +1126,107 @@ function twwt_woo_add_to_cart_validation($passed, $product_id, $quantity, $varia
             }
         }
 
-        // Set cookies for seat selection (not sure if this is necessary for debugging)
-        setcookie('seat_selected', time() + 600, time() + 600, '/');
-        setcookie("seat_selected_{$variation_id}", time() + 600, time() + 600, '/');
+        setcookie('seat_selected', time() + TWWT_SEAT_HOLD_SECONDS, time() + TWWT_SEAT_HOLD_SECONDS, '/');
+        setcookie("seat_selected_{$variation_id}", time() + TWWT_SEAT_HOLD_SECONDS, time() + TWWT_SEAT_HOLD_SECONDS, '/');
     }
 
     return $passed;
 }
 
-// Hook this validation function into WooCommerce
 add_filter('woocommerce_add_to_cart_validation', 'twwt_woo_add_to_cart_validation', 10, 4);
 
 function twwt_woo_check_cart_timing(){
 	if(is_admin()){
 		return;
 	}
-	
+
 	if( ! WC()->cart->is_empty() ){
 		foreach ( WC()->cart->get_cart() as $cart_item_key => $cart_item ) {
+			if(!twwt_woo_product_seat($cart_item['product_id'])){
+				continue;
+			}
 
-			// get the data of the cart item
-			$product_id         = $cart_item['product_id'];
-			$variation_id       = $cart_item['variation_id'];
-			if(twwt_woo_product_seat($cart_item['product_id'])){
-				if(!isset($_COOKIE['seat_selected_'.$variation_id])) {
+			// Check seat hold validity via the timestamp stored in the cart item
+			if ( !empty($cart_item['twwt_added_at']) ) {
+				if ( (time() - intval($cart_item['twwt_added_at'])) > TWWT_SEAT_HOLD_SECONDS ) {
 					WC()->cart->remove_cart_item($cart_item_key);
 				}
 			}
 		}
 	}
-	
+
 }
 add_action('wp', 'twwt_woo_check_cart_timing');
 
-
-/**
- * Add custom cart item data
- */
 function twwt_woo_add_cart_item_data( $cart_item_data, $product_id, $variation_id ) {
- if( isset( $_POST['seat'] ) ) {
-	 $booked_seats = $_POST['seat'];
+ if( isset( $_POST['seat'] ) && is_array( $_POST['seat'] ) ) {
+	 $booked_seats = array_map( 'sanitize_text_field', $_POST['seat'] );
 	 $cart_item_data['seat'] = implode(', ', $booked_seats );
-	 
-	 //$booking_details = array('seats' => $booked_seats, 'booking_time' => current_time( 'mysql' ));
-	 foreach($booked_seats as $seat){
-		 update_post_meta( $variation_id, 'temp_booked_seat_'.$seat, current_time( 'timestamp' ) );
+
+	 // Store the actual variation_id (WC may pass 0 if product loaded as simple)
+	 $actual_vid = $variation_id;
+	 if ( empty($actual_vid) && !empty($_POST['variation_id']) ) {
+		 $actual_vid = absint($_POST['variation_id']);
 	 }
+	 $cart_item_data['twwt_variation_id'] = $actual_vid;
+
+	 // Timestamp for cart hold expiry check (independent of cookies/metadata)
+	 $cart_item_data['twwt_added_at'] = time();
  }
  return $cart_item_data;
 }
 add_filter( 'woocommerce_add_cart_item_data', 'twwt_woo_add_cart_item_data', 10, 3 );
 
 /**
- * Display custom item data in the cart
+ * Release temp seat bookings when an item is removed from the cart.
  */
+add_action( 'woocommerce_remove_cart_item', 'twwt_woo_release_temp_seats_on_remove', 10, 2 );
+function twwt_woo_release_temp_seats_on_remove( $cart_item_key, $cart ) {
+    $item = isset( $cart->removed_cart_contents[ $cart_item_key ] )
+        ? $cart->removed_cart_contents[ $cart_item_key ]
+        : ( isset( $cart->cart_contents[ $cart_item_key ] ) ? $cart->cart_contents[ $cart_item_key ] : null );
+
+    if ( ! $item ) { return; }
+
+    // Use twwt_variation_id (actual variation) first, then WC's variation_id
+    $variation_id = ! empty( $item['twwt_variation_id'] ) ? intval( $item['twwt_variation_id'] ) : 0;
+    if ( ! $variation_id ) {
+        $variation_id = ! empty( $item['variation_id'] ) ? intval( $item['variation_id'] ) : 0;
+    }
+    if ( ! $variation_id ) { return; }
+
+    if ( ! empty( $item['seat'] ) ) {
+        $seats = array_map( 'trim', explode( ',', $item['seat'] ) );
+        foreach ( $seats as $seat ) {
+            if ( preg_match( '/^[a-zA-Z0-9_\-]+$/', $seat ) ) {
+                delete_post_meta( $variation_id, 'temp_booked_seat_' . $seat );
+            }
+        }
+    }
+}
+
+/**
+ * Release all temp seat bookings when the entire cart is emptied.
+ */
+add_action( 'woocommerce_cart_emptied', 'twwt_woo_release_temp_seats_on_empty' );
+function twwt_woo_release_temp_seats_on_empty() {
+    // WC clears cart_contents before this hook, but we stored seats in session
+    $cart = WC()->cart;
+    if ( ! $cart ) { return; }
+
+    // The cart contents are already cleared at this point, so we clean via DB
+    // This is a safety net — the per-item handler above should catch most cases
+    global $wpdb;
+    // Clean any temp seats that belong to the current user's recent session (within 10 min)
+    $cutoff = time() - 600;
+    $wpdb->query( $wpdb->prepare(
+        "DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE %s AND meta_value > %d",
+        'temp_booked_seat_%',
+        $cutoff
+    ) );
+}
+
+
 function twwt_woo_get_item_data( $item_data, $cart_item_data ) {
 	if( isset( $cart_item_data['seat'] ) ) {
 		$item_data[] = array(
@@ -1082,9 +1238,7 @@ function twwt_woo_get_item_data( $item_data, $cart_item_data ) {
 }
 add_filter( 'woocommerce_get_item_data', 'twwt_woo_get_item_data', 10, 2 );
 
-/**
- * Add custom meta to order
- */
+
 function twwt_woo_checkout_create_order_line_item( $item, $cart_item_key, $values, $order ) {
 	if( isset( $values['seat'] ) ) {
 		$item->add_meta_data(
@@ -1092,29 +1246,27 @@ function twwt_woo_checkout_create_order_line_item( $item, $cart_item_key, $value
 			$values['seat'],
 			true
 		);
-		//$booked_seats = explode(', ',$values['seat']);
-		//$variation_id = $item->get_variation_id() ? $item->get_variation_id() : $item->get_product_id();
-		/*if ( $order->has_status( 'processing' ) ) {
-			foreach($booked_seats as $seat){
-				update_post_meta( $variation_id, 'perma_booked_seat_'.$seat, current_time( 'timestamp' ) );
-			}
-		}*/
+	}
+	// Store the actual variation_id (WC may have 0 if product loaded as simple)
+	if ( ! empty( $values['twwt_variation_id'] ) ) {
+		$item->add_meta_data( '_twwt_variation_id', intval( $values['twwt_variation_id'] ), true );
 	}
 }
 add_action( 'woocommerce_checkout_create_order_line_item', 'twwt_woo_checkout_create_order_line_item', 10, 4 );
 
 function twwt_woo_get_availability_v2($item_id, $ticket_no){
-	#PERMANENT CHECKING
+
 	$perma_book = get_post_meta($item_id, 'perma_booked_seat_'.$ticket_no, true);
 	if($perma_book!=""){
 		return array("status" => true, "type" => "perma");
 	}
-	#TEMP CHECKING
 	$temp_booking_time = get_post_meta($item_id, 'temp_booked_seat_'.$ticket_no, true);
 	if($temp_booking_time!=""){
-		$current_time = current_time( 'timestamp' );
+		$current_time = time();
 		$time_diff = $current_time - $temp_booking_time;
-		if($time_diff>300){
+		if($time_diff > TWWT_SEAT_HOLD_SECONDS){
+			// Expired — clean up the orphaned meta
+			delete_post_meta($item_id, 'temp_booked_seat_'.$ticket_no);
 			return array("status" => false, "type" => "");
 		}
 		else{
@@ -1123,17 +1275,17 @@ function twwt_woo_get_availability_v2($item_id, $ticket_no){
 	}
 }
 function twwt_woo_get_availability($item_id, $ticket_no){
-	#PERMANENT CHECKING
 	$perma_book = get_post_meta($item_id, 'perma_booked_seat_'.$ticket_no, true);
 	if($perma_book!=""){
 		return true;
 	}
-	#TEMP CHECKING
 	$temp_booking_time = get_post_meta($item_id, 'temp_booked_seat_'.$ticket_no, true);
 	if($temp_booking_time!=""){
-		$current_time = current_time( 'timestamp' );
+		$current_time = time();
 		$time_diff = $current_time - $temp_booking_time;
-		if($time_diff>300){
+		if($time_diff > TWWT_SEAT_HOLD_SECONDS){
+			// Expired — clean up the orphaned meta
+			delete_post_meta($item_id, 'temp_booked_seat_'.$ticket_no);
 			return false;
 		}
 		else{
@@ -1203,8 +1355,13 @@ function twwt_woo_show_notice() {
             $variation_id = $cart_item['variation_id'];
 
             if (twwt_woo_product_seat($cart_item['product_id'])) {
+                // Legacy shortcode cart/checkout hooks
                 add_action('woocommerce_before_cart', 'twwt_woo_display_notice', 5);
                 add_action('woocommerce_before_checkout_form', 'twwt_woo_display_notice', 5);
+                // Block-based cart/checkout fallback (wp_footer)
+                if (is_cart() || is_checkout()) {
+                    add_action('wp_footer', 'twwt_woo_display_notice_footer', 5);
+                }
                 break; // Add notice only once
             }
         }
@@ -1214,12 +1371,55 @@ function twwt_woo_show_notice() {
 function twwt_woo_display_notice() {
     foreach (WC()->cart->get_cart() as $cart_item_key => $cart_item) {
         $product_id = $cart_item['product_id'];
-        $variation_id = $cart_item['variation_id'];
+        // Use the actual variation_id (twwt_variation_id) which matches JS sessionStorage keys
+        $variation_id = ! empty( $cart_item['twwt_variation_id'] ) ? $cart_item['twwt_variation_id'] : $cart_item['variation_id'];
 
         if (twwt_woo_product_seat($cart_item['product_id'])) {
             $pname = html_entity_decode(get_the_title($product_id));
-            echo '<ul class="woocommerce-error" role="alert"><li><span class="twwt_woo_cc_notice" data-id="' . $variation_id . '" data-title="' . $pname . '">Please wait...</span></li></ul>';
+            echo '<ul class="woocommerce-error" role="alert"><li><span class="twwt_woo_cc_notice" data-id="' . esc_attr($variation_id) . '" data-title="' . esc_attr($pname) . '">Please wait...</span></li></ul>';
         }
+    }
+}
+
+function twwt_woo_display_notice_footer() {
+    // Only render if the notice wasn't already rendered by legacy hooks
+    static $rendered = false;
+    if ($rendered) return;
+    $rendered = true;
+
+    $notices = '';
+    foreach (WC()->cart->get_cart() as $cart_item_key => $cart_item) {
+        $product_id = $cart_item['product_id'];
+        // Use the actual variation_id (twwt_variation_id) which matches JS sessionStorage keys
+        $variation_id = ! empty( $cart_item['twwt_variation_id'] ) ? $cart_item['twwt_variation_id'] : $cart_item['variation_id'];
+
+        if (twwt_woo_product_seat($cart_item['product_id'])) {
+            $pname = html_entity_decode(get_the_title($product_id));
+            $notices .= '<li><span class="twwt_woo_cc_notice" data-id="' . esc_attr($variation_id) . '" data-title="' . esc_attr($pname) . '">Please wait...</span></li>';
+        }
+    }
+    if ($notices) {
+        echo '<div id="twwt-timer-notice" style="display:none"><ul class="woocommerce-error" role="alert">' . $notices . '</ul></div>';
+        echo '<script>
+(function(){
+    var n = document.getElementById("twwt-timer-notice");
+    if (!n) return;
+    // If legacy notice already exists on page, remove the footer duplicate
+    if (document.querySelector(".woocommerce-notices-wrapper .twwt_woo_cc_notice, .woocommerce-error .twwt_woo_cc_notice:not(#twwt-timer-notice .twwt_woo_cc_notice)")) {
+        n.remove(); return;
+    }
+    // Insert before the cart block or main content
+    var target = document.querySelector(".wp-block-woocommerce-cart, .wp-block-woocommerce-checkout, .woocommerce-cart, .woocommerce-checkout, .entry-content, main");
+    if (target) {
+        n.style.display = "";
+        target.insertBefore(n, target.firstChild);
+    } else {
+        n.style.display = "";
+    }
+    // Re-init timer
+    if (typeof twwt_reinit_timer === "function") { setTimeout(twwt_reinit_timer, 200); }
+})();
+</script>';
     }
 }
 
@@ -1260,10 +1460,8 @@ function twwt_woo_show_stock_shop() {
 
 }
 
-#REFUND,Cancel,failed
 add_action('woocommerce_order_status_failed', 'twwt_handle_order_failed', 100, 2);
 function twwt_handle_order_failed($order_id, $order_obj = null) {
-    // avoid double processing
     if ( get_post_meta( $order_id, '_twwt_failed_handled', true ) ) {
         return;
     }
@@ -1274,23 +1472,22 @@ function twwt_handle_order_failed($order_id, $order_obj = null) {
 
     foreach ( $order->get_items() as $item ) {
         $variation_id = $item->get_variation_id();
+        if ( ! $variation_id ) {
+            $variation_id = (int) $item->get_meta('_twwt_variation_id', true);
+        }
         if ( ! $variation_id ) { continue; }
 
         $seats = $item->get_meta('Seat(s)', true);
         if ( empty( $seats ) ) { continue; }
 
         $seats = array_map('trim', explode(',', $seats));
-        // remove both perma and temp keys
         custom_delete_seats($variation_id, $seats);
-        // authoritative stock recalculation
         twwt_recalculate_variation_stock( $variation_id );
     }
 
     update_post_meta($order_id, 'epp_is_seats_removed', 1);
 }
 
-
-// Delete seats meta helpers
 function custom_delete_seats($item_id, $seats) {
     global $wpdb;
     foreach ($seats as $seat) {
@@ -1308,17 +1505,15 @@ function custom_delete_seats($item_id, $seats) {
         ) );
     }
 }
-// Refunded → remove seats + recalc stock (fixed priority & duplication)
+
 add_action('woocommerce_order_refunded', 'twwt_handle_order_refunded', 100, 2);
 function twwt_handle_order_refunded($order_id, $refund_id) {
-    // Respect WooCommerce’s “restock refunded items” checkbox
     $restock = isset($_POST['restock_refunded_items'])
         ? filter_var($_POST['restock_refunded_items'], FILTER_VALIDATE_BOOLEAN)
         : true;
 
     if (!$restock) return;
 
-    // Avoid duplicate handling
     if ( get_post_meta( $order_id, '_twwt_refund_handled', true ) ) {
         return;
     }
@@ -1329,6 +1524,9 @@ function twwt_handle_order_refunded($order_id, $refund_id) {
 
     foreach ($order->get_items() as $item) {
         $variation_id = $item->get_variation_id();
+        if ( ! $variation_id ) {
+            $variation_id = (int) $item->get_meta('_twwt_variation_id', true);
+        }
         if (!$variation_id) continue;
 
         $seats = $item->get_meta('Seat(s)', true);
@@ -1336,10 +1534,8 @@ function twwt_handle_order_refunded($order_id, $refund_id) {
 
         $seats = array_map('trim', explode(',', $seats));
 
-        // Delete both perma & temp seats for safety
         custom_delete_seats($variation_id, $seats);
 
-        // Recalculate available seats (authoritative)
         twwt_recalculate_variation_stock($variation_id);
     }
 
@@ -1347,10 +1543,8 @@ function twwt_handle_order_refunded($order_id, $refund_id) {
 }
 
 
-// Cancelled → remove seats + recalc stock (run after core handlers)
 add_action('woocommerce_order_status_cancelled', 'custom_handle_order_cancellation', 100, 2);
 function custom_handle_order_cancellation($order_id, $order) {
-    // prevent double handling
     if ( get_post_meta( $order_id, '_twwt_cancel_handled', true ) ) {
         return;
     }
@@ -1359,6 +1553,9 @@ function custom_handle_order_cancellation($order_id, $order) {
     if (!custom_has_refunds($order)) {
         foreach ($order->get_items() as $item) {
             $variation_id = $item->get_variation_id();
+            if ( ! $variation_id ) {
+                $variation_id = (int) $item->get_meta('_twwt_variation_id', true);
+            }
             if ( ! $variation_id ) { continue; }
             $seats = $item->get_meta('Seat(s)', true);
             if (!empty($seats)) {
@@ -1391,24 +1588,31 @@ function twwt_delete_seat($item_id, $seats) {
     }
 }
 
-/* When order becomes paid/permanent → write perma seat + recalc stock */
 function twwt_update_seat($order_id) {
     $order = wc_get_order($order_id);
     $items = $order->get_items();
 
     foreach ($items as $item) {
+        // Use WC's variation_id, or fall back to our stored twwt_variation_id
         $variation_id = $item->get_variation_id();
+        if ( ! $variation_id ) {
+            $variation_id = (int) $item->get_meta('_twwt_variation_id', true);
+        }
         if ( ! $variation_id ) { continue; }
 
         $seats = $item->get_meta('Seat(s)', true);
         $booked_seats = array_filter(array_map('trim', explode(',', (string) $seats)));
 
         foreach ($booked_seats as $seat) {
-            update_post_meta($variation_id, 'perma_booked_seat_' . $seat, current_time('timestamp'));
+            update_post_meta($variation_id, 'perma_booked_seat_' . $seat, time());
+            // Clean up the corresponding temp booking now that it's permanent
+            delete_post_meta($variation_id, 'temp_booked_seat_' . $seat);
         }
 
-        // ensure stock reflects those seats
-        //twwt_recalculate_variation_stock( $variation_id );
+        // Update WC stock to reflect the newly booked seats
+        if ( ! empty( $booked_seats ) ) {
+            twwt_recalculate_variation_stock( $variation_id );
+        }
     }
 }
 add_action('woocommerce_order_status_processing', 'twwt_update_seat');
@@ -1430,8 +1634,8 @@ function twwt_add_custom_checkout_field( $checkout ) {
 }
 add_action( 'woocommerce_checkout_process', 'twwt_validate_new_checkout_field' );
   
-function twwt_validate_new_checkout_field() {    
-   if ( ! $_POST['screen_name'] ) {
+function twwt_validate_new_checkout_field() {
+   if ( empty( $_POST['screen_name'] ) ) {
       wc_add_notice( 'Please enter your Screen Name', 'error' );
    }
 }
@@ -1464,7 +1668,8 @@ function twwt_show_new_checkout_field_order( $order ) {
 add_action( 'woocommerce_email_after_order_table', 'twwt_show_new_checkout_field_emails', 20, 4 );
   
 function twwt_show_new_checkout_field_emails( $order, $sent_to_admin, $plain_text, $email ) {
-    if ( get_post_meta( $order->get_id(), '_screen_name', true ) ) echo '<p><strong>Screen Name:</strong> ' . get_post_meta( $order->get_id(), '_screen_name', true ) . '</p>';
+    $screen_name = get_post_meta( $order->get_id(), '_screen_name', true );
+    if ( $screen_name ) echo '<p><strong>Screen Name:</strong> ' . esc_html( $screen_name ) . '</p>';
 }
 
 add_filter( 'woocommerce_add_to_cart_redirect', 'twwt_add_to_cart_redirect', 10, 1 );
@@ -1487,52 +1692,42 @@ function twwt_add_to_cart_redirect( $url ) {
     return $url;
 }
 
-##
 
-##SELECT WINNER##
 add_action('init', 'twwt_select_winner');
 function twwt_select_winner(){
 	// 1) When admin clicks "Select Winner"
     if ( isset($_GET['myaction']) && $_GET['myaction'] === "selectwinner" ) {
+
+        if ( ! current_user_can('manage_woocommerce') || ! isset($_GET['_wpnonce']) || ! wp_verify_nonce($_GET['_wpnonce'], 'twwt_select_winner') ) {
+            wp_die('Unauthorized request.', 'Forbidden', array('response' => 403));
+        }
 
         $product_id = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
         $order_id   = isset($_GET['oid']) ? intval($_GET['oid']) : 0;
         $seat       = isset($_GET['seat']) ? sanitize_text_field($_GET['seat']) : '';
 
         if ( ! $product_id || ! $order_id ) {
-            exit; // safety: missing data
+            exit;
         }
 
-        // Current time in site timezone
-        $current_timestamp  = current_time( 'timestamp', 0 );
+        $current_timestamp  = time();
         $winner_selected_at = date( 'Y-m-d H:i:s', $current_timestamp );
 
-        /**
-         * Read product go-live / starting time.
-         * This should already be stored by your "Start Webinar" screen
-         * in meta key: tww_event_s_date
-         */
         $go_live_raw = get_post_meta( $product_id, 'tww_event_s_date', true );
         $go_live_ts  = $go_live_raw ? strtotime( $go_live_raw ) : 0;
 
-        // Default: no delay (send as soon as cron runs)
         $delay_seconds = 0;
 
         if ( $go_live_ts ) {
-            $diff = $go_live_ts - $current_timestamp; // seconds until go-live
+            $diff = $go_live_ts - $current_timestamp;
 
-            // If go-live is more than 1 hour in the future → delay by 2 hours
-            if ( $diff > 3600 ) { // 3600s = 1 hour
-                $delay_seconds = 2 * 3600; // 2 hours
+            if ( $diff > 3600 ) {
+                $delay_seconds = 2 * 3600;
             }
         }
-        // If go-live is within 1 hour, missing, or invalid → delay stays 0
-
-        // Final scheduled time for BOTH winner + "didn't win" notifications
         $winner_notification_ts = $current_timestamp + $delay_seconds;
         $winner_notification_at = date( 'Y-m-d H:i:s', $winner_notification_ts );
 
-        // Save winner meta
         update_post_meta( $product_id, 'tww_winner_id',          $order_id );
         update_post_meta( $product_id, 'tww_winner_seat_id',     $seat );
         update_post_meta( $product_id, 'tww_winner_s_date',      $winner_selected_at );
@@ -1541,54 +1736,13 @@ function twwt_select_winner(){
         update_post_meta( $product_id, 'tww_winner_form_id',     md5( mt_rand() ) );
         update_post_meta( $product_id, 'tww_winner_form_submit', 0 );
 
-        // IMPORTANT:
-        // We do NOT send any notifications here anymore.
-        // Both the winner and "didn't win" notifications will be sent
-        // by the cron function twwt_send_msg_winner() when the
-        // tww_winner_n_date time is reached.
-
         exit;
     }
-	else if(@$_GET['myaction']=="createevent"){
-		$event_name = $_GET['evn'];
-		$event_time = $_GET['evd'].':00';
-		$timestampm = strtotime($event_time);	
-		$formattedDatem = date("F j, Y, g:i A", $timestampm);
-		$product_id = $_GET['pid'];
-		$event_created = get_post_meta( $product_id, 'event_created', true );
-		
-		if($event_created!=1){
-			
-			$event = twwt_create_event($event_name, $event_time);
-			
-			if($event['status']==1){
-				$response = json_decode($event['response']);
-				update_post_meta($product_id, 'event_data', $response);
-				if($response->errors){
-					update_post_meta($product_id, 'event_created', 0);
-					
-				}
-				else{
-					update_post_meta($product_id, 'event_created', 1);
-					update_post_meta($product_id, '_event_name', $event_name);
-					update_post_meta($product_id, '_event_ls_time', $event_time);
-					#For Notification
-					$current_timestamp = current_time( 'timestamp', 0 );
-					$event_start_at = $event_time;
-					$sub_10min = @strtotime($event_time) - (60*10);
-					$event_notification_at = date( 'Y-m-d H:i:s', $sub_10min );
-					$event_time_m = $formattedDatem.' ('.get_option('timezone_string').')';
-
-					update_post_meta($product_id, 'tww_event_s_date', $event_start_at);
-					update_post_meta($product_id, 'tww_event_n_date', $event_notification_at);
-					update_post_meta($product_id, 'tww_event_n_send', 0);
-				}
-				echo $event['response'];
-			}
-		}
-		exit;
-	}
 	else if ( isset($_GET['myaction']) && $_GET['myaction'] === "zoomnotification" ) {
+
+        if ( ! current_user_can('manage_woocommerce') || ! isset($_GET['_wpnonce']) || ! wp_verify_nonce($_GET['_wpnonce'], 'twwt_zoom_notification') ) {
+            wp_die('Unauthorized request.', 'Forbidden', array('response' => 403));
+        }
 
         $event_url      = isset($_GET['evn']) ? esc_url_raw($_GET['evn']) : '';
         $event_password = isset($_GET['evp']) ? sanitize_text_field($_GET['evp']) : '';
@@ -1599,49 +1753,38 @@ function twwt_select_winner(){
             exit;
         }
 
-        // Add seconds for a full datetime string
         $event_time_string = $event_time_raw . ':00';
 
-        // Use WordPress timezone, not server timezone
         if ( function_exists( 'wp_timezone' ) ) {
             $tz = wp_timezone();
         } else {
-            // Fallback for very old WP versions
             $tz_string = get_option( 'timezone_string' );
             $tz = $tz_string ? new DateTimeZone( $tz_string ) : new DateTimeZone( 'UTC' );
         }
 
-        // Create a DateTime object in the WP timezone
         try {
             $dt = new DateTime( $event_time_string, $tz );
         } catch ( Exception $e ) {
-            // If parsing fails, bail out safely
             exit;
         }
 
         $event_ts = $dt->getTimestamp();
 
-        // Nicely formatted string for emails/SMS, in WP timezone
         $formattedDatem = wp_date( 'F j, Y, g:i A', $event_ts, $tz );
         $event_created  = get_post_meta( $product_id, 'event_created', true );
 
         if ( $event_created != 1 ) {
 
-            // This is the string sent to customers in the Zoom notification
             $event_time_m = $formattedDatem . ' (' . get_option( 'timezone_string' ) . ')';
 
-            // Send Zoom notification (unchanged)
             $event = twwt_send_zoom_notification( $product_id, $event_url, $event_time_m, $event_password );
 
-            // Mark event as created and store Zoom data
             update_post_meta( $product_id, 'event_created',   1 );
             update_post_meta( $product_id, '_event_name',     $event_url );
             update_post_meta( $product_id, '_event_password', $event_password );
 
-            // For winner/attendee reminder scheduling:
-            // store start time and "10 minutes before" time in WP timezone
-            $event_start_at_ts  = $event_ts;                // exact start
-            $event_notify_ts    = $event_ts - 10 * 60;      // 10 minutes before
+            $event_start_at_ts  = $event_ts;
+            $event_notify_ts    = $event_ts - 10 * 60;
 
             $event_start_at     = wp_date( 'Y-m-d H:i:s', $event_start_at_ts, $tz );
             $event_notification = wp_date( 'Y-m-d H:i:s', $event_notify_ts,   $tz );
@@ -1654,15 +1797,10 @@ function twwt_select_winner(){
         exit;
     }
 
-	else if(@$_GET['myaction']=="sendcustomer"){
-		$product_id = $_GET['pid'];
-		twwt_send_customer($product_id);
-		exit;
-	}
 	else if(@$_GET['myaction']=="remove-webinar"){
 		$rdata = array();
-		if ( is_user_logged_in() ) {
-			$product_id = $_GET['pid'];
+		if ( is_user_logged_in() && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'twwt_remove_webinar') ) {
+			$product_id = intval($_GET['pid']);
 			add_user_meta( get_current_user_id(), 'remove_webinar_video', $product_id);
 			$rdata['status'] = 'success';
 		}
@@ -1673,17 +1811,19 @@ function twwt_select_winner(){
 		exit;
 	}
 	else if(@$_GET['myaction']=="export_csv"){
-		twwt_get_csv($_GET['pid']);
+		if ( ! current_user_can('manage_woocommerce') || ! isset($_GET['_wpnonce']) || ! wp_verify_nonce($_GET['_wpnonce'], 'twwt_export_csv') ) {
+			wp_die('Unauthorized request.', 'Forbidden', array('response' => 403));
+		}
+		twwt_get_csv(intval($_GET['pid']));
 		exit;
 	}
 }
 
-/*WP Cron*/
-//Schedule an action if it's not already scheduled
+
 add_filter( 'cron_schedules', function ( $schedules ) {
    $schedules['twwt_per_one_minute'] = array(
        'interval' => 600,
-       'display' => __( 'Every 1 mins' )
+       'display' => __( 'Every 10 minutes' )
    );
    return $schedules;
 } );
@@ -1698,9 +1838,8 @@ add_filter('cron_schedules', function ($schedules) {
 
 if ( ! wp_next_scheduled( 'twwt_cron_hook' ) ) {
     wp_schedule_event( time(), 'twwt_per_one_minute', 'twwt_cron_hook' );
-	//Every five minutes
 }
-///Hook into that action that'll fire every day
+
 add_action( 'twwt_cron_hook', 'twwt_send_msg_winner' );
 
 if (!wp_next_scheduled('twwt_cron_hook1')) {
@@ -1711,37 +1850,19 @@ add_action('twwt_cron_hook1', 'twwt_send_np_notification');
 
 add_action( 'init', 'tww_mycall' );
 function tww_mycall(){
-	if(@$_GET['m']==1){
+	if( isset($_GET['m']) && $_GET['m']==1 ){
+		if ( ! current_user_can('manage_options') ) {
+			wp_die('Unauthorized request.', 'Forbidden', array('response' => 403));
+		}
 		twwt_send_msg_winner();
 		twwt_send_np_notification();
 	}
-	
 }
-add_action( 'wp', 'tww_joinevent' );
-function tww_joinevent(){
-	if(@$_GET['joinevent']){
-		if(is_product()){
-			$product_id = get_the_ID();
-			$event_created = get_post_meta($product_id, 'event_created', true);
-			if($event_created==1){
-				$event_data = get_post_meta($product_id, 'event_data', true);
-				$event_url = "https://app.livestorm.co/p/".$event_data->data->id;
-				echo '<h1 style="text-align:center">Please wait...</h1>';
-				echo '<script>window.location.href="'.$event_url.'";</script>';
-				exit;
-			}
-			
-		}
-	}
-}
-
-//create your function, that runs on cron
 function twwt_send_msg_winner() {
     global $wpdb;
 
-    $current_timestamp = current_time( 'timestamp', 0 );
+    $current_timestamp = time();
 
-    // Find products where winner notification has not yet been sent
     $results = $wpdb->get_results(
         "SELECT post_id, meta_key 
          FROM $wpdb->postmeta 
@@ -1763,28 +1884,23 @@ function twwt_send_msg_winner() {
         $winner_notification_ts = $winner_notification_at ? strtotime( $winner_notification_at ) : 0;
 
         if ( ! $winner_notification_ts ) {
-            // If somehow missing/invalid, send immediately and mark done
             $winner_notification_ts = $current_timestamp;
         }
 
         $time_diff = $winner_notification_ts - $current_timestamp;
 
-        // Not yet time → skip this product for now
         if ( $time_diff > 0 ) {
             continue;
         }
 
-        // === Time reached → send winner notification ===
         $order_id = $winner_id;
         $order    = wc_get_order( $order_id );
 
         if ( ! $order ) {
-            // No valid order? Mark as sent to avoid infinite loop
             update_post_meta( $product_id, 'tww_winner_n_send', 1 );
             continue;
         }
 
-        // Get winner's seats (for completeness, though not used in message)
         $seats = "";
         foreach ( $order->get_items() as $item_id => $item ) {
             foreach ( $item->get_meta_data() as $itemvariation ) {
@@ -1797,7 +1913,6 @@ function twwt_send_msg_winner() {
             }
         }
 
-        // Get screen name
         $screen_name = get_post_meta( $order_id, '_screen_name', true );
         if ( $screen_name == "" ) {
             $cuser = $order->get_user();
@@ -1816,7 +1931,6 @@ function twwt_send_msg_winner() {
 
         $form_link  = get_permalink(91).'?formid='.$winner_form_id.'&pid='.$product_id.'&uid='.$user_id;
 
-        // 1) Email + SMS to the winner
         twwt_email_send( $email, $product_name, $first_name, $last_name, $screen_name, $phone, $form_link );
 
         $settings   = get_option( 'twwt_woo_settings' );
@@ -1827,95 +1941,17 @@ function twwt_send_msg_winner() {
         $twilio_msg = $smscontent;
         wp_twilio_sms($phone, $twilio_msg);
 
-        // 2) "Didn't win" notifications (to all other attendees) at the SAME time
         if ( ! empty( $settings['winner_noto_others'] ) && $settings['winner_noto_others'] == 1 ) {
-            // This function already skips the winner user.
             twwt_send_msg_winnerselected($product_id);
         }
-
-        // 3) Mark notifications as sent for this product
         update_post_meta($product_id, 'tww_winner_n_send', 1);
     }
 }
 
 
-#Send Event Notification before start
 
-function twwt_send_msg_event() {
-	global $wpdb;
-	$current_timestamp = current_time( 'timestamp', 0 );
-	$results = $wpdb->get_results( "select post_id, meta_key from $wpdb->postmeta where meta_key ='tww_event_n_send' AND meta_value = '0'" );
-	if(!empty($results)){
-		foreach($results as $result){
-			$product_id = $result->post_id;
-			
-			$event_notification_at = get_post_meta( $product_id, 'tww_event_n_date', true );
-			$event_notification_at = strtotime($winner_notification_at);
-						
-			$time_diff = $event_notification_at - $current_timestamp;
-			
-			if($time_diff<=0){
-				###
-				#GET ALL CUSTOMER
-				
-	
-				$statuses = array_map( 'esc_sql', wc_get_is_paid_statuses() );
-				//print_r($statuses);
-				$order_ids = $wpdb->get_col("
-				   SELECT p.ID, pm.meta_value FROM {$wpdb->posts} AS p
-				   INNER JOIN {$wpdb->postmeta} AS pm ON p.ID = pm.post_id
-				   INNER JOIN {$wpdb->prefix}woocommerce_order_items AS i ON p.ID = i.order_id
-				   INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta AS im ON i.order_item_id = im.order_item_id
-				   WHERE p.post_status IN ( 'wc-" . implode( "','wc-", $statuses ) . "' )
-				   AND pm.meta_key IN ( '_billing_email' )
-				   AND im.meta_key IN ( '_product_id', '_variation_id' )
-				   AND im.meta_value = $product_id
-				");
-				 
-				// Print array on screen
-				if(!empty($order_ids)){
-					$product_url = get_permalink($product_id).'?joinevent=true';
-					$event_name = get_post_meta( $product_id, '_event_name', true );
-					$event_time = get_post_meta($product_id, '_event_ls_time', $event_time);
-					$timestampm = strtotime($event_time);
-					$formattedDatem = date("F j, Y, g:i A", $timestampm);
-					$event_time_m = $formattedDatem.' ('.get_option('timezone_string').')';
-					foreach($order_ids as $order_id){
-						if(!twwy_has_refunds_v2($order_id)){
-							$order = wc_get_order( $order_id );
-							$first_name = $order->get_billing_first_name();
-							$last_name = $order->get_billing_last_name();
-							$email = $order->get_billing_email();
-							$phone = $order->get_billing_phone();
-							twwt_lsemail_send($email, $product_name, $first_name, $last_name, $event_name, $phone, $event_time_m, $product_url);
-							
-							$settings = get_option( 'twwt_woo_settings' );
-							$smscontent = $settings['sms_livestrom_notification'];
-							// Replace placeholders with actual values
-							$smscontent = str_replace('%first_name%', $first_name, $smscontent);
-							$smscontent = str_replace('%event_name%', $event_name, $smscontent);
-							$smscontent = str_replace('%product_url%', $product_url, $smscontent);
-							$twilio_msg = $smscontent;
-							wp_twilio_sms($phone, $twilio_msg);
-						}
-					}
-				}
-				update_post_meta($product_id, 'tww_event_n_send', 1);
-			}
-			###
-		}
-	}
-	
-}
-
-
-#SEND WINNER SELECTED MESSAGE TO ALL
 function twwt_send_msg_winnerselected( $product_id ) {
     global $wpdb;
-
-    /** ===============================
-     *  GET WINNER USER
-     *  =============================== */
     $winner_order_id = get_post_meta( $product_id, 'tww_winner_id', true );
     if ( ! $winner_order_id ) {
         return;
@@ -1928,7 +1964,6 @@ function twwt_send_msg_winnerselected( $product_id ) {
 
     $winner_user = $winner_order->get_user();
 
-    // Resolve screen name
     $screen_name = get_post_meta( $winner_order_id, '_screen_name', true );
     if ( empty( $screen_name ) ) {
         if ( $winner_user && ! empty( $winner_user->display_name ) ) {
@@ -1938,20 +1973,8 @@ function twwt_send_msg_winnerselected( $product_id ) {
         }
     }
 
-    /** ===============================
-     *  GET ALL RELATED ORDERS
-     *  =============================== */
-    $statuses = array_map( 'esc_sql', wc_get_is_paid_statuses() );
-
-    $order_ids = $wpdb->get_col("
-        SELECT DISTINCT p.ID
-        FROM {$wpdb->posts} AS p
-        INNER JOIN {$wpdb->prefix}woocommerce_order_items AS i ON p.ID = i.order_id
-        INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta AS im ON i.order_item_id = im.order_item_id
-        WHERE p.post_status IN ( 'wc-" . implode( "','wc-", $statuses ) . "' )
-        AND im.meta_key IN ( '_product_id', '_variation_id' )
-        AND im.meta_value = {$product_id}
-    ");
+    $product_id = intval($product_id);
+    $order_ids = twwt_get_paid_order_ids_for_product( $product_id );
 
     if ( empty( $order_ids ) ) {
         return;
@@ -1961,15 +1984,8 @@ function twwt_send_msg_winnerselected( $product_id ) {
     $settings        = get_option( 'twwt_woo_settings' );
     $sms_template    = isset( $settings['sms_winner_noti_others'] ) ? $settings['sms_winner_noti_others'] : '';
 
-    /** ===============================
-     *  DEDUPLICATION TRACKERS
-     *  =============================== */
     $notified_users  = array();
     $notified_emails = array();
-
-    /** ===============================
-     *  SEND NOTIFICATIONS
-     *  =============================== */
     foreach ( $order_ids as $order_id ) {
 
         if ( twwy_has_refunds_v2( $order_id ) ) {
@@ -1985,22 +2001,17 @@ function twwt_send_msg_winnerselected( $product_id ) {
         $email = $order->get_billing_email();
         $phone = $order->get_billing_phone();
 
-        // Skip winner user
         if ( $user && $winner_user && $user->ID === $winner_user->ID ) {
             continue;
         }
 
-        // Prevent duplicate notifications (user-based)
         if ( $user && isset( $notified_users[ $user->ID ] ) ) {
             continue;
         }
-
-        // Prevent duplicate notifications (guest/email-based)
         if ( ! $user && $email && isset( $notified_emails[ $email ] ) ) {
             continue;
         }
 
-        // Mark as notified
         if ( $user ) {
             $notified_users[ $user->ID ] = true;
         } elseif ( $email ) {
@@ -2011,14 +2022,18 @@ function twwt_send_msg_winnerselected( $product_id ) {
         $last_name  = $order->get_billing_last_name();
 
         // Send email
-        twwt_email_winner_send(
-            $email,
-            $product_name,
-            $first_name,
-            $last_name,
-            $screen_name,
-            $phone
-        );
+        try {
+            twwt_email_winner_send(
+                $email,
+                $product_name,
+                $first_name,
+                $last_name,
+                $screen_name,
+                $phone
+            );
+        } catch ( \Exception $e ) {
+            error_log( '[TWWT] Winner email failed for order ' . $order_id . ': ' . $e->getMessage() );
+        }
 
         // Send SMS
         if ( $phone && $sms_template ) {
@@ -2028,7 +2043,11 @@ function twwt_send_msg_winnerselected( $product_id ) {
                 $sms_template
             );
 
-            wp_twilio_sms( $phone, $sms_content );
+            try {
+                wp_twilio_sms( $phone, $sms_content );
+            } catch ( \Exception $e ) {
+                error_log( '[TWWT] Winner SMS failed for order ' . $order_id . ': ' . $e->getMessage() );
+            }
         }
     }
 }
@@ -2038,19 +2057,19 @@ function twwt_email_send($email, $product_name, $first_name, $last_name, $screen
 	global $woocommerce;
 	$mailer = $woocommerce->mailer();
 	$settings = get_option( 'twwt_woo_settings' );
-	$emailsubject = $settings['wwinner_notification_sub'];
-	$emailcontent = $settings['wwinner_notification'];
-	
+	$emailsubject = isset($settings['wwinner_notification_sub']) ? $settings['wwinner_notification_sub'] : '';
+	$emailcontent = isset($settings['wwinner_notification']) ? $settings['wwinner_notification'] : '';
+
 	$emailsubject = str_replace('%first_name%', $first_name, $emailsubject);
     $emailsubject = str_replace('%product_name%', $product_name, $emailsubject);
     $emailsubject = str_replace('%last_name%', $last_name, $emailsubject);
 	$emailsubject = str_replace('%screen_name%', $screen_name, $emailsubject);
     $emailsubject = str_replace('%phone%', $phone, $emailsubject);
-	$emailcontent = str_replace('%first_name%', $first_name, $emailcontent);
-    $emailcontent = str_replace('%product_name%', $product_name, $emailcontent);
-    $emailcontent = str_replace('%last_name%', $last_name, $emailcontent);
-	$emailcontent = str_replace('%screen_name%', $screen_name, $emailcontent);
-    $emailcontent = str_replace('%phone%', $phone, $emailcontent);
+	$emailcontent = str_replace('%first_name%', esc_html($first_name), $emailcontent);
+    $emailcontent = str_replace('%product_name%', esc_html($product_name), $emailcontent);
+    $emailcontent = str_replace('%last_name%', esc_html($last_name), $emailcontent);
+	$emailcontent = str_replace('%screen_name%', esc_html($screen_name), $emailcontent);
+    $emailcontent = str_replace('%phone%', esc_html($phone), $emailcontent);
 	$email_heading = $emailsubject;
 	ob_start();
 	wc_get_template( 'emails/email-header.php', array( 'email_heading' => $email_heading ) );
@@ -2059,60 +2078,28 @@ function twwt_email_send($email, $product_name, $first_name, $last_name, $screen
 	$message = ob_get_clean();
 	$subject = $email_heading;
 	$admin_foot_notes = "<p><small>Originally sent to {$first_name}</small></p>";
-	//$mailer->send('info@marksmanreview.com', $subject, $message.$admin_foot_notes); // To Admin
 	return $mailer->send( $email, $subject, $message);
 	//return true;
 }
 
-//livestrom event email
-function twwt_lsemail_send($email, $product_name, $first_name, $last_name, $event_name, $phone, $event_time_m, $product_url){
-	global $woocommerce;
-	$mailer = $woocommerce->mailer();
-	$settings = get_option( 'twwt_woo_settings' );
-	$emailsubject = $settings['elivestrom_notification_sub'];
-	$emailcontent = $settings['elivestrom_notification'];
-	
-	$emailsubject = str_replace('%first_name%', $first_name, $emailsubject);
-    $emailsubject = str_replace('%product_name%', $product_name, $emailsubject);
-    $emailsubject = str_replace('%last_name%', $last_name, $emailsubject);
-	$emailsubject = str_replace('%event_name%', $event_name, $emailsubject);
-    $emailsubject = str_replace('%event_time%', $event_time_m, $emailsubject);
-	$emailcontent = str_replace('%first_name%', $first_name, $emailcontent);
-    $emailcontent = str_replace('%product_name%', $product_name, $emailcontent);
-    $emailcontent = str_replace('%last_name%', $last_name, $emailcontent);
-	$emailcontent = str_replace('%event_name%', $event_name, $emailcontent);
-    $emailcontent = str_replace('%event_time%', $event_time_m, $emailcontent);
-	$emailcontent = str_replace('%product_url%', $product_url, $emailcontent);
-	$email_heading = $emailsubject;
-	ob_start();
-	wc_get_template( 'emails/email-header.php', array( 'email_heading' => $email_heading ) );
-	echo wpautop($emailcontent);
-	wc_get_template( 'emails/email-footer.php' );
-	$message = ob_get_clean();
-	$subject = $email_heading;
-	$admin_foot_notes = "<p><small>Originally sent to {$first_name}</small></p>";
-	//$mailer->send('info@marksmanreview.com', $subject, $message.$admin_foot_notes); // To Admin
-	return $mailer->send( $email, $subject, $message);
-	//return true;
-}
 
 function twwt_email_winner_send($email, $product_name, $first_name, $last_name, $screen_name, $phone, $form_link=""){
 	global $woocommerce;
 	$mailer = $woocommerce->mailer();
 	$settings = get_option( 'twwt_woo_settings' );
-	$emailsubject = $settings['winner_noti_others_sub'];
-	$emailcontent = $settings['winner_noti_others'];
-	
+	$emailsubject = isset($settings['winner_noti_others_sub']) ? $settings['winner_noti_others_sub'] : '';
+	$emailcontent = isset($settings['winner_noti_others']) ? $settings['winner_noti_others'] : '';
+
 	$emailsubject = str_replace('%first_name%', $first_name, $emailsubject);
     $emailsubject = str_replace('%product_name%', $product_name, $emailsubject);
     $emailsubject = str_replace('%last_name%', $last_name, $emailsubject);
 	$emailsubject = str_replace('%screen_name%', $screen_name, $emailsubject);
     $emailsubject = str_replace('%phone%', $phone, $emailsubject);
-	$emailcontent = str_replace('%first_name%', $first_name, $emailcontent);
-    $emailcontent = str_replace('%product_name%', $product_name, $emailcontent);
-    $emailcontent = str_replace('%last_name%', $last_name, $emailcontent);
-	$emailcontent = str_replace('%screen_name%', $screen_name, $emailcontent);
-    $emailcontent = str_replace('%phone%', $phone, $emailcontent);
+	$emailcontent = str_replace('%first_name%', esc_html($first_name), $emailcontent);
+    $emailcontent = str_replace('%product_name%', esc_html($product_name), $emailcontent);
+    $emailcontent = str_replace('%last_name%', esc_html($last_name), $emailcontent);
+	$emailcontent = str_replace('%screen_name%', esc_html($screen_name), $emailcontent);
+    $emailcontent = str_replace('%phone%', esc_html($phone), $emailcontent);
 	
 	$email_heading = $emailsubject;
 	ob_start();
@@ -2138,14 +2125,7 @@ function twwy_has_refunds_v2($order_id){
 		return false;
 	}
 }
-/*function twwy_extra_register_fields(){
-	?>
-<p class="form-row form-row-wide">
-<label><input type="checkbox" name="twwy_opt_notification" value="1" checked="checked"><span>Sign up to receive notifications when a new webinar is available.</span></label>
-</p>
-	<?php
-}
-add_action( 'woocommerce_register_form', 'twwy_extra_register_fields' );*/
+
 //
 function twwy_modify_user_table( $column ) {
     $column['optin'] = 'OPT-in';
@@ -2163,37 +2143,28 @@ function twwy_modify_user_table_row( $val, $column_name, $user_id ) {
 }
 add_filter( 'manage_users_custom_column', 'twwy_modify_user_table_row', 10, 3 );  
 
-/**
- * -------------------------------------------------
- * 2. ADD CUSTOM REGISTRATION FIELDS (ORDERED)
- * -------------------------------------------------
- */
 add_action( 'woocommerce_register_form_start', 'review_raffle_custom_register_fields' );
 function review_raffle_custom_register_fields() {
     ?>
 
-    <!-- First Name -->
     <p class="form-row form-row-wide">
         <label for="reg_billing_first_name"><?php esc_html_e( 'First name', 'woocommerce' ); ?> <span class="required">*</span></label>
         <input type="text" class="input-text" name="billing_first_name" id="reg_billing_first_name"
             value="<?php echo ! empty( $_POST['billing_first_name'] ) ? esc_attr( $_POST['billing_first_name'] ) : ''; ?>" required/>
     </p>
 
-    <!-- Last Name -->
     <p class="form-row form-row-wide">
         <label for="reg_billing_last_name"><?php esc_html_e( 'Last name', 'woocommerce' ); ?> <span class="required">*</span></label>
         <input type="text" class="input-text" name="billing_last_name" id="reg_billing_last_name"
             value="<?php echo ! empty( $_POST['billing_last_name'] ) ? esc_attr( $_POST['billing_last_name'] ) : ''; ?>" required/>
     </p>
 
-    <!-- Screen Name -->
     <p class="form-row form-row-wide">
         <label for="reg_screen_name"><?php esc_html_e( 'Screen name', 'woocommerce' ); ?> <span class="required">*</span></label>
         <input type="text" class="input-text" name="screen_name" id="reg_screen_name"
             value="<?php echo ! empty( $_POST['screen_name'] ) ? esc_attr( $_POST['screen_name'] ) : ''; ?>" required/>
     </p>
 
-    <!-- Phone Number -->
     <p class="form-row form-row-wide">
         <label for="reg_phone_number"><?php esc_html_e( 'Phone number', 'woocommerce' ); ?> <span class="required">*</span></label>
         <input type="text" class="input-text" name="phone_number" id="reg_phone_number"
@@ -2206,7 +2177,6 @@ function review_raffle_custom_register_fields() {
 add_action( 'woocommerce_register_form', 'review_raffle_custom_register_checknotufields' );
 function review_raffle_custom_register_checknotufields() {
 ?>
-<!-- Notification Opt-in -->
     <p class="form-row form-row-wide">
         <label class="woocommerce-form__label woocommerce-form__label-for-checkbox">
             <input type="checkbox" name="twwy_opt_notification" value="1"
@@ -2217,11 +2187,6 @@ function review_raffle_custom_register_checknotufields() {
 <?php
 }
 
-/**
- * -------------------------------------------------
- * 3. VALIDATION
- * -------------------------------------------------
- */
 add_filter( 'woocommerce_registration_errors', 'review_raffle_validate_register_fields', 10, 3 );
 function review_raffle_validate_register_fields( $errors, $username, $email ) {
 
@@ -2244,12 +2209,6 @@ function review_raffle_validate_register_fields( $errors, $username, $email ) {
     return $errors;
 }
 
-
-/**
- * -------------------------------------------------
- * 4. SAVE USER META
- * -------------------------------------------------
- */
 add_action( 'woocommerce_created_customer', 'review_raffle_save_register_fields' );
 function review_raffle_save_register_fields( $customer_id ) {
 
@@ -2266,45 +2225,7 @@ function review_raffle_save_register_fields( $customer_id ) {
         update_user_meta( $customer_id, 'twwy_opt_notification', 1 );
     }
 }
-/**
- * -------------------------------------------------
- * 5. MODIFY ACCOUNT DETAILS EMAIL
- * -------------------------------------------------
- */
-// Add custom checkbox field to WooCommerce checkout for logged-out customers
-/*add_action('woocommerce_after_order_notes', 'add_custom_checkbox_to_checkout');
-function add_custom_checkbox_to_checkout($checkout) {
-    if (is_user_logged_in()) {
-        return; // Do not display for logged-in customers
-    }
-    
-    echo '<div id="custom_checkbox_field" class="form-row form-row-wide">';
-    
-    woocommerce_form_field('twwy_opt_notification', array(
-        'type'          => 'checkbox',
-        'class'         => array('input-checkbox'),
-        'label_class'   => array('woocommerce-form__label', 'woocommerce-form__label-for-checkbox', 'checkbox'),
-        'input_class'   => array('woocommerce-form__input', 'woocommerce-form__input-checkbox'),
-        'label'         => __('Sign up to receive notifications when a new webinar is available.', 'woocommerce'),
-        'default'       => 1, // Checked by default
-    ), $checkout->get_value('twwy_opt_notification'));
-    
-    echo '</div>';
-}
 
-// Save custom checkbox field value to order meta for logged-out customers
-add_action('woocommerce_checkout_update_order_meta', 'save_custom_checkbox_field_value');
-function save_custom_checkbox_field_value($order_id) {
-    if (is_user_logged_in()) {
-        return; // Do not save for logged-in customers
-    }
-    
-    if ($_POST['twwy_opt_notification']) {
-        update_post_meta($order_id, 'Notification Checkbox', __('1', 'woocommerce'));
-    }
-}*/
-
-// Add phone number field to account edit form
 add_action( 'woocommerce_edit_account_form', 'add_phone_number_to_edit_account_form');
 function add_phone_number_to_edit_account_form() {
     $user_id = get_current_user_id();
@@ -2327,7 +2248,7 @@ function add_phone_number_to_edit_account_form() {
     <?php
 }
 
-// Save phone number field value to user meta
+
 add_action( 'woocommerce_save_account_details', 'save_phone_number_field_value_on_account_page' );
 function save_phone_number_field_value_on_account_page( $user_id ) {
     if ( isset( $_POST['account_phone_number'] ) ) {
@@ -2336,15 +2257,13 @@ function save_phone_number_field_value_on_account_page( $user_id ) {
 	if ( isset( $_POST['account_screen_name'] ) ) {
         update_user_meta( $user_id, 'screen_name', sanitize_text_field( $_POST['account_screen_name'] ) );
     }
-	// opt-in checkbox: if present store '1', otherwise store '0' (so user can opt-out)
     if ( isset( $_POST['account_twwy_opt_notification'] ) && $_POST['account_twwy_opt_notification'] === '1' ) {
         update_user_meta( $user_id, 'twwy_opt_notification', '1' );
     } else {
-        // ensure we explicitly save 0 when unchecked
         update_user_meta( $user_id, 'twwy_opt_notification', '0' );
     }
 }
-// Add Screen name field to admin profile page
+
 add_action( 'show_user_profile', 'add_job_title_field' );
 add_action( 'edit_user_profile', 'add_job_title_field' );
 function add_job_title_field( $user ) {
@@ -2362,7 +2281,6 @@ function add_job_title_field( $user ) {
     <?php
 }
 
-// Save field data
 add_action( 'personal_options_update', 'save_job_title_field' );
 add_action( 'edit_user_profile_update', 'save_job_title_field' );
 function save_job_title_field( $user_id ) {
@@ -2372,15 +2290,9 @@ function save_job_title_field( $user_id ) {
     update_user_meta( $user_id, 'screen_name', sanitize_text_field( $_POST['screen_name'] ) );
 }
 
-/** 
- * === Admin: allow editing user OPT-IN (twwy_opt_notification) ===
- */
-
-// Add the checkbox to the profile edit form
 add_action('show_user_profile', 'twwy_add_optin_field_admin');
 add_action('edit_user_profile', 'twwy_add_optin_field_admin');
 function twwy_add_optin_field_admin( $user ) {
-    // Only admins or editors can change it
     if ( ! current_user_can('edit_users') ) {
         return;
     }
@@ -2402,8 +2314,6 @@ function twwy_add_optin_field_admin( $user ) {
     </table>
     <?php
 }
-
-// Save the field when profile is updated
 add_action('personal_options_update', 'twwy_save_optin_field_admin');
 add_action('edit_user_profile_update', 'twwy_save_optin_field_admin');
 function twwy_save_optin_field_admin( $user_id ) {
@@ -2411,7 +2321,6 @@ function twwy_save_optin_field_admin( $user_id ) {
         return false;
     }
 
-    // If checked → 1, else 0
     if ( isset($_POST['twwy_opt_notification']) && $_POST['twwy_opt_notification'] == '1' ) {
         update_user_meta( $user_id, 'twwy_opt_notification', '1' );
     } else {
@@ -2419,15 +2328,13 @@ function twwy_save_optin_field_admin( $user_id ) {
     }
 }
 
-//require file
+
 require_once('twwt-admin-settings.php');
 require_once(plugin_dir_path(__FILE__) . 'twwt-product-notification.php');
 require_once(plugin_dir_path(__FILE__) . 'twwt-order-csv.php');
-require_once(plugin_dir_path(__FILE__) . 'twwt-livestrom.php');
 require_once(plugin_dir_path(__FILE__) . 'twwt-myaccount-videos.php');
 require_once(plugin_dir_path(__FILE__) . 'twwt-admin-add-webinar-simple.php');
 
-// licence key conditional validation file
 function twwt_plugin_control_functionality() {
 $license_manager = new twwt_woo_settings_page();
    if (!$license_manager->twwt_license_key_valid()) {
@@ -2448,7 +2355,6 @@ if ($license_manager_api_validation->twwt_license_key_valid()) {
 
 
     require_once(plugin_dir_path(__FILE__) . 'twwt-admin-metabox.php');
-    //require_once(plugin_dir_path(__FILE__) . 'twwt-myaccount-videos.php');
     
 }
 
@@ -2456,9 +2362,8 @@ if ($license_manager_api_validation->twwt_license_key_valid()) {
 add_action('admin_init', 'valid_files_licence'); 
 
 
-// Add new tab
-$taboptions = get_option( 'twwt_woo_settings' );	
-if($taboptions['producttab']==1){
+$taboptions = get_option( 'twwt_woo_settings' );
+if(is_array($taboptions) && !empty($taboptions['producttab']) && $taboptions['producttab']==1){
 add_filter( 'woocommerce_product_tabs', 'twwt_woo_new_product_tab' );
 function twwt_woo_new_product_tab( $tabs ) { 
 global $post;
@@ -2479,7 +2384,7 @@ if(get_post_meta( $post->ID, 'woo_seat_show', true )==1){
 function twwt_woo_new_product_tab_content() {
 	global $post;
 	if(get_post_meta( $post->ID, 'woo_seat_show', true )==1){
-		echo '<section class="tab-participant" data-id="'.$post->ID.'"></section>';
+		echo '<section class="tab-participant" data-id="'.intval($post->ID).'"></section>';
 	}
 }
 
@@ -2487,6 +2392,9 @@ function twwt_woo_new_product_tab_content() {
 add_action('init', 'twwt_get_participant');
 function twwt_get_participant(){
 	if(isset($_GET['participant'])){
+		if ( ! current_user_can('manage_woocommerce') ) {
+			wp_die('Unauthorized request.', 'Forbidden', array('response' => 403));
+		}
 		require plugin_dir_path( __FILE__ ) . 'ticket-participant.php';
 		exit;
 	}
@@ -2495,11 +2403,11 @@ function twwt_get_participant(){
 add_action('init', 'twwt_get_availability_check');
 function twwt_get_availability_check(){
 	if(isset($_GET['availabilitycheck'])){
-		$variation_id = $_GET['variationid'];
-		$seat = $_GET['seat'];
+		$variation_id = intval($_GET['variationid']);
+		$seat = sanitize_text_field($_GET['seat']);
 		$availability = twwt_woo_get_availability($variation_id, $seat);
 		if($availability){
-			 echo 'Selected seat "'.$seat.'" is not available for booking.';
+			 echo 'Selected seat "' . esc_html($seat) . '" is not available for booking.';
 		}
 		else{
 			echo 1;
@@ -2537,20 +2445,8 @@ function tw_woo_customize_product_tabs( $tabs ) {
 }*/
 
 function twwt_customer_purchased($customer_id, $product_id){
-    global $wpdb;
-
-    $statuses = array_map( 'esc_sql', wc_get_is_paid_statuses() );
-    //print_r($statuses);
-    $order_ids = $wpdb->get_col("
-       SELECT p.ID, pm.meta_value FROM {$wpdb->posts} AS p
-       INNER JOIN {$wpdb->postmeta} AS pm ON p.ID = pm.post_id
-       INNER JOIN {$wpdb->prefix}woocommerce_order_items AS i ON p.ID = i.order_id
-       INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta AS im ON i.order_item_id = im.order_item_id
-       WHERE p.post_status IN ( 'wc-" . implode( "','wc-", $statuses ) . "' )
-       AND pm.meta_key IN ( '_billing_email' )
-       AND im.meta_key IN ( '_product_id', '_variation_id' )
-       AND im.meta_value = $product_id
-    ");
+    $product_id = intval($product_id);
+    $order_ids = twwt_get_paid_order_ids_for_product( $product_id );
     if(!empty($order_ids)){
     	foreach($order_ids as $order_id){
     		if(!twwy_has_refunds_v2($order_id)){
@@ -2564,55 +2460,74 @@ function twwt_customer_purchased($customer_id, $product_id){
     }
 }
 
-//shortcode
 function winner_page_shortcode( $atts ) {
     ob_start();
-	$woocommerce;
+    try {
     $product_id = isset( $_GET['pid'] ) ? intval( $_GET['pid'] ) : 0;
-    $product = wc_get_product( $product_id );
-    $variations = $product ? $product->get_available_variations() : array();
 
-    if ( ! empty( $product_id ) ) {
+    if ( empty( $product_id ) ) {
+        echo '<p>No product selected.</p>';
+        return ob_get_clean();
+    }
+
+    $product = wc_get_product( $product_id );
+
+    // Determine if winner selection should be enabled:
+    // Use event_created meta (set when zoom notification is sent) as the reliable indicator
+    $event_created    = get_post_meta( $product_id, 'event_created', true ) == 1;
+    $allow_selection  = $event_created || ( $product && ! $product->is_in_stock() );
+
+    // Read color settings with fallback defaults
+    $twwt_settings    = get_option( 'twwt_woo_settings', array() );
+    $clr_primary      = ! empty( $twwt_settings['winner_primary_color'] )   ? $twwt_settings['winner_primary_color']   : '#d63638';
+    $clr_hover        = ! empty( $twwt_settings['winner_primary_hover'] )   ? $twwt_settings['winner_primary_hover']   : '#b32d2f';
+    $clr_table_hdr    = ! empty( $twwt_settings['winner_table_header_bg'] ) ? $twwt_settings['winner_table_header_bg'] : '#f5f5f5';
+    $clr_btn_text     = ! empty( $twwt_settings['winner_button_text'] )     ? $twwt_settings['winner_button_text']     : '#ffffff';
+
+    {
         $winner_id = get_post_meta( $product_id, 'tww_winner_id', true );
         $winner_seat_id = get_post_meta( $product_id, 'tww_winner_seat_id', true );
-        $statuses = array_map( 'esc_sql', wc_get_is_paid_statuses() );
-        $order_ids = $GLOBALS['wpdb']->get_col( "
-            SELECT p.ID, pm.meta_value FROM {$GLOBALS['wpdb']->posts} AS p
-            INNER JOIN {$GLOBALS['wpdb']->postmeta} AS pm ON p.ID = pm.post_id
-            INNER JOIN {$GLOBALS['wpdb']->prefix}woocommerce_order_items AS i ON p.ID = i.order_id
-            INNER JOIN {$GLOBALS['wpdb']->prefix}woocommerce_order_itemmeta AS im ON i.order_item_id = im.order_item_id
-            WHERE p.post_status IN ( 'wc-" . implode( "','wc-", $statuses ) . "' )
-            AND pm.meta_key IN ( '_billing_email' )
-            AND im.meta_key IN ( '_product_id', '_variation_id' )
-            AND im.meta_value = $product_id
-        " );
+        $order_ids = twwt_get_paid_order_ids_for_product( $product_id );
     ?>
-        <div class="enterChance p-90">
-            <div class="container">
-                <div class="row">
-                    <div class="col-lg-12">
-                        <div class="headingFnt winnerheading text-center">
-                            <h3><?php echo get_the_title( $product_id ); ?></h3>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="container pt-4 pb-5">
+        <style>
+        .twwt-winner-wrap { max-width: 960px; margin: 0 auto; padding: 0 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .twwt-winner-title { text-align: center; margin: 30px 0 24px; font-size: 1.6em; font-weight: 600; }
+        .twwt-winner-grid { display: flex; flex-wrap: wrap; gap: 30px; }
+        .twwt-winner-col { flex: 1; min-width: 300px; }
+        .twwt-winner-col h4 { text-align: center; margin-bottom: 12px; font-size: 1.15em; font-weight: 600; }
+        .twwt-winner-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        .twwt-winner-table th,
+        .twwt-winner-table td { border: 1px solid #ddd; padding: 10px 14px; text-align: left; }
+        .twwt-winner-table th { background: <?php echo esc_attr( $clr_table_hdr ); ?>; font-weight: 600; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.03em; }
+        .twwt-winner-table tbody tr:nth-child(even) { background: #fafafa; }
+        .twwt-winner-table tbody tr:hover { background: #f0f0f0; }
+        .twwt-winner-actions { text-align: center; margin-top: 16px; }
+        .twwt-btn-winner { display: inline-block; background: <?php echo esc_attr( $clr_primary ); ?>; color: <?php echo esc_attr( $clr_btn_text ); ?>; border: none; padding: 12px 28px; font-size: 1em; font-weight: 600; border-radius: 4px; cursor: pointer; text-decoration: none; }
+        .twwt-btn-winner:hover { background: <?php echo esc_attr( $clr_hover ); ?>; color: <?php echo esc_attr( $clr_btn_text ); ?>; }
+        .twwt-btn-winner .dashicons { vertical-align: middle; margin-right: 4px; }
+        .twwt-alert { background: #fcebea; border: 1px solid <?php echo esc_attr( $clr_primary ); ?>; color: #8b1a1c; padding: 16px 20px; border-radius: 4px; text-align: center; margin-top: 16px; }
+        .twwt-alert a { display: inline-block; margin-top: 8px; background: <?php echo esc_attr( $clr_primary ); ?>; color: <?php echo esc_attr( $clr_btn_text ); ?>; padding: 8px 20px; border-radius: 4px; text-decoration: none; font-weight: 600; }
+        .twwt-alert a:hover { background: <?php echo esc_attr( $clr_hover ); ?>; color: <?php echo esc_attr( $clr_btn_text ); ?>; }
+        .twwt-generator { margin-top: 10px; overflow: hidden; }
+        .twwt-generator iframe { border: none; transform: scale(1.2); transform-origin: top left; width: 84%; }
+        .twwt-radio-cell { text-align: center; width: 56px; }
+        .twwt-radio-cell input[type="radio"] { width: 18px; height: 18px; cursor: pointer; }
+        @media (max-width: 700px) { .twwt-winner-grid { flex-direction: column; } }
+        </style>
+        <div class="twwt-winner-wrap">
+            <h3 class="twwt-winner-title"><?php echo esc_html( get_the_title( $product_id ) ); ?></h3>
             <?php if ( current_user_can( 'editor' ) || current_user_can( 'administrator' ) ) { ?>
-            <div class="row winnerwrap_row">
-                <div class="col-lg-6 attendeewiner">
-                    <h4 class="text-center mb-2">Attendee </h4>
+            <div class="twwt-winner-grid">
+                <div class="twwt-winner-col">
+                    <h4>Attendee</h4>
                     <form method="post" id="tw_mywinnerform">
-                        <table class="table table-bordered table-striped table-hover" id="mytable">
+                        <table class="twwt-winner-table" id="mytable">
                             <thead>
                                 <tr>
-                                    <?php if ( empty( $variations ) ) { ?>
-                                        <th width="56">&nbsp;</th>
-                                    <?php } else { ?>
-                                        <th class="sr-only">&nbsp;</th>
+                                    <?php if ( $allow_selection ) { ?>
+                                        <th class="twwt-radio-cell">&nbsp;</th>
                                     <?php } ?>
-                                    <th width="150">Seat Number</th>
+                                    <th>Seat Number</th>
                                     <th>Name</th>
                                 </tr>
                             </thead>
@@ -2621,6 +2536,7 @@ function winner_page_shortcode( $atts ) {
                                 $cnn = 0;
                                 foreach ( $order_ids as $order_id ) {
                                     $order = wc_get_order( $order_id );
+                                    if ( ! $order ) { continue; }
                                     if ( ! twwy_has_refunds_v2( $order_id ) ) {
                                         $screen_name = get_post_meta( $order_id, '_screen_name', true );
 										$billing_first_name = $order->get_billing_first_name();
@@ -2634,10 +2550,9 @@ function winner_page_shortcode( $atts ) {
 							$screen_name = $order->get_billing_first_name();
 						}
 					}
-					
+
 					 $seats = "";
 					 foreach ( $order->get_items() as $item_id => $item ) {
-						 //$allmeta = $item->get_meta_data();
 						 if( $item->get_product_id() == $product_id){
 							 foreach ( $item->get_meta_data() as $itemvariation ) {
 								if ( ! is_array( ( $itemvariation->value ) ) ) {
@@ -2650,18 +2565,17 @@ function winner_page_shortcode( $atts ) {
 						 }
 					 }
 					 $seat_array = explode(', ', $seats);
-					 
+
 					 foreach($seat_array as $seat){
 						 $cnn++;
 						 ?>
                          <tr>
-                         <?php if(empty($variations)){ ?>
-                         <td class="text-center">
-                         
+                         <?php if( $allow_selection ){ ?>
+                         <td class="twwt-radio-cell">
                          <?php if($winner_id>0){ if($winner_seat_id==$seat){ echo '<i class="dashicons dashicons-awards"></i>';}}else{?><input type="radio" name="rbtnseats" value="<?php echo $seat;?>" data-id="<?php echo $order_id;?>" class="tw_rbtn" <?php if($cnn==1){echo 'required="required"';}?> /><?php } ?></td>
-                         <?php }else{echo '<td class="sr-only"></td>';} ?>
-                         <td class="pts"><?php echo $seat;?></td>
-                         <td id="wsnm_<?php echo $seat;?>"><?php echo $full_name;?><?php //echo $screen_name;?></td>
+                         <?php } ?>
+                         <td><?php echo $seat;?></td>
+                         <td id="wsnm_<?php echo $seat;?>"><?php echo esc_html($full_name);?></td>
                          </tr>
                          <?php
 					 }
@@ -2670,25 +2584,28 @@ function winner_page_shortcode( $atts ) {
 				?>
                 </tbody>
                 </table>
-                <?php if(empty($variations)){?>
-                <div class="text-center">
+                <?php if( $allow_selection ){?>
+                <div class="twwt-winner-actions">
                 <?php if($winner_id>0){ }else{ ?>
                 <input type="hidden" name="orderid" id="tw_orderid" value="0" />
                 <input type="hidden" name="pid" id="tw_pid" value="<?php echo $product_id;?>" />
-                <button type="submit" class="btn btn-winner" id="btn_select_winnerf"><i class="dashicons dashicons-awards"></i> <span>Select a Winner</span></button>
+                <input type="hidden" id="tw_winner_nonce" value="<?php echo wp_create_nonce('twwt_select_winner'); ?>" />
+                <button type="submit" class="twwt-btn-winner" id="btn_select_winnerf"><i class="dashicons dashicons-awards"></i> <span>Select a Winner</span></button>
                 <?php } ?>
                 </div>
                 <?php }else{ ?>
-                <div class="alert alert-danger text-center"><p>Seats are still available in this webinar.</p> <p><a href="<?php echo get_permalink($product_id);?>" class="btn btn-danger">Go back</a></p></div>
+                <div class="twwt-alert"><p>Seats are still available in this webinar.</p> <p><a href="<?php echo esc_url(get_permalink($product_id));?>">Go back</a></p></div>
 				<?php }?>
                 </form>
                 </div>
-                <div class="col-lg-6 generatornum">
-                <?php if(empty($variations)){?>
-                <h4 class="text-left mb-2">Generate Number</h4>
-                <iframe src="https://www.random.org/widgets/integers/iframe.php?title=True+Random+Number+Generator&amp;buttontxt=Generate&amp;width=100%&amp;height=250&amp;border=on&amp;bgcolor=%23FFFFFF&amp;txtcolor=%23777777&amp;altbgcolor=%23e42c2c&amp;alttxtcolor=%23FFFFFF&amp;defaultmin=1&amp;defaultmax=&amp;fixed=off" frameborder="0" width="100%" height="250" style="min-height:250px;" scrolling="no" longdesc="https://www.random.org/integers/">
-The numbers generated by this widget come from RANDOM.ORGs true random number generator.
+                <div class="twwt-winner-col">
+                <?php if( $allow_selection ){?>
+                <h4>Generate Number</h4>
+                <div class="twwt-generator">
+                <iframe src="https://www.random.org/widgets/integers/iframe.php?title=True+Random+Number+Generator&amp;buttontxt=Generate&amp;width=360&amp;height=360&amp;border=on&amp;bgcolor=%23FFFFFF&amp;txtcolor=%23777777&amp;altbgcolor=%23e42c2c&amp;alttxtcolor=%23FFFFFF&amp;defaultmin=1&amp;defaultmax=<?php echo $cnn; ?>&amp;fixed=off" frameborder="0" width="100%" height="380" scrolling="auto" longdesc="https://www.random.org/integers/">
+The numbers generated by this widget come from RANDOM.ORG's true random number generator.
 </iframe>
+</div>
 <?php } ?>
 </div>
 </div>
@@ -2696,8 +2613,17 @@ The numbers generated by this widget come from RANDOM.ORGs true random number ge
 <?php
 			}
 		}
+    } catch ( \Throwable $e ) {
+        if ( current_user_can( 'manage_options' ) ) {
+            echo '<div style="color:red;padding:20px;border:1px solid red;margin:20px 0;">';
+            echo '<strong>Winner page error:</strong> ' . esc_html( $e->getMessage() );
+            echo '<br><small>' . esc_html( $e->getFile() ) . ':' . $e->getLine() . '</small>';
+            echo '</div>';
+        }
+        error_log( '[TWWT] Winner page error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() );
+    }
 $output = ob_get_clean();
-return $output;			
+return $output;
  } 
 add_shortcode( 'my_shortcode', 'winner_page_shortcode' );
 
@@ -2777,7 +2703,6 @@ if (is_account_page()) {
 }
 add_action( 'wp_footer', 'my_custom_footer_message' );
 
-// Hook to modify the order actions for failed orders
 add_filter( 'woocommerce_my_account_my_orders_actions', 'custom_my_account_failed_order_actions', 10, 2 );
 
 function custom_my_account_failed_order_actions( $actions, $order ) {
@@ -2794,20 +2719,12 @@ function custom_my_account_failed_order_actions( $actions, $order ) {
     return $actions;
 }
 
-// === Admin: show provider-aware SMS info on user profile ===
-
-/**
- * Helper: current active SMS provider
- */
 function twwt_get_active_sms_provider() {
     $opts = get_option('twwt_woo_settings', []);
     return isset($opts['sms_provider']) ? $opts['sms_provider'] : 'twilio';
 }
 
-/**
- * Helper: map OtterText optincheck to label
- * 1 = NewCustomer, 2 = OptinRequested, 3 = OptedIn, 4 = OptedOut, 5 = InvalidNumber
- */
+
 function twwt_ottertext_optin_label($code) {
     switch ((string) $code) {
         case '1': return 'New Customer';
@@ -2819,13 +2736,10 @@ function twwt_ottertext_optin_label($code) {
     }
 }
 
-/**
- * Render section on user profile (admin)
- */
+
 add_action('show_user_profile', 'twwt_show_sms_provider_user_panel');
 add_action('edit_user_profile', 'twwt_show_sms_provider_user_panel');
 function twwt_show_sms_provider_user_panel($user) {
-    // Only admins/editors should see the provider panel
     if ( ! current_user_can('list_users') ) {
         return;
     }
@@ -2843,11 +2757,8 @@ function twwt_show_sms_provider_user_panel($user) {
         <?php if ($provider === 'ottertext') : 
             $partner   = isset($opts['ottertext_partner']) ? $opts['ottertext_partner'] : '';
 
-            // Raw phone from Woo profile
             $raw_phone = get_user_meta($user->ID, 'billing_phone', true);
-            // Normalized phone saved during sync/send (if available)
             $ot_phone  = get_user_meta($user->ID, 'ottertext_phone', true);
-            // Prefer the OtterText-normalized phone; fall back to raw
             $display_phone = $ot_phone ? $ot_phone : $raw_phone;
 
             $optin     = get_user_meta($user->ID, 'ottertext_optincheck', true);
@@ -2892,9 +2803,7 @@ function twwt_show_sms_provider_user_panel($user) {
     <?php
 }
 
-/**
- * Admin meta box: show winner notification schedule on product edit screen.
- */
+
 add_action( 'add_meta_boxes', 'twwt_add_winner_schedule_metabox' );
 function twwt_add_winner_schedule_metabox() {
     add_meta_box(
@@ -2907,12 +2816,8 @@ function twwt_add_winner_schedule_metabox() {
     );
 }
 
-/**
- * Meta box callback: prints "Winner selected at" and "Notifications scheduled for".
- */
 function twwt_winner_schedule_metabox_cb( $post ) {
 
-    // Raw meta values stored when winner is selected
     $winner_selected_at     = get_post_meta( $post->ID, 'tww_winner_s_date', true );
     $winner_notification_at = get_post_meta( $post->ID, 'tww_winner_n_date', true );
 
@@ -2956,7 +2861,6 @@ function twwt_winner_schedule_metabox_cb( $post ) {
     <?php
 }
 
-// Register the dashboard widget
 add_action('wp_dashboard_setup', 'twwt_register_notification_widget');
 function twwt_register_notification_widget() {
     wp_add_dashboard_widget(
@@ -2966,21 +2870,16 @@ function twwt_register_notification_widget() {
     );
 }
 
-// Display the widget content (updated for Immediate + Daily batch)
 function twwt_display_notification_widget() {
-    // Basic parts
     $settings = get_option('twwt_woo_settings', array());
     $mode = isset($settings['notification_mode']) ? $settings['notification_mode'] : 'immediate';
 
-    // WP timezone for date displays
     if ( function_exists('wp_timezone') ) {
         $tz = wp_timezone();
     } else {
         $tz_string = get_option('timezone_string');
         $tz = new DateTimeZone( $tz_string ? $tz_string : 'UTC' );
     }
-
-    // Helper: format timestamp in site tz
     $fmt_ts = function($ts) use ($tz) {
         if (!$ts) return '—';
         $d = new DateTime('@' . intval($ts));
@@ -2988,20 +2887,16 @@ function twwt_display_notification_widget() {
         return $d->format('Y-m-d H:i:s');
     };
 
-    // Count of opted-in users (twwy_opt_notification == 1)
     $opted_in_count = 0;
     $total_customers = 0;
-    // We'll attempt a light-weight count using WP_User_Query
     $user_count_args = array(
         'role' => 'customer',
         'fields' => 'ID',
         'number' => 1,
     );
-    // Count total customers quickly:
     $user_query_total = new WP_User_Query(array_merge($user_count_args, array('number' => 1)));
     $total_customers = (int) $user_query_total->get_total();
 
-    // Count opted-in customers - attempt WP_User_Query with meta query and count.
     $opt_query = new WP_User_Query(array(
         'role' => 'customer',
         'meta_query' => array(
@@ -3023,7 +2918,6 @@ function twwt_display_notification_widget() {
     echo '<p><strong>Total customers:</strong> ' . number_format_i18n($total_customers) . ' &nbsp; <strong>Opted-in:</strong> ' . number_format_i18n($opted_in_count) . '</p>';
 
     if ($mode === 'immediate') {
-        // Immediate mode: show single active notification post
         $post_id = get_option('twwt_np_notification_auto_start_post_id');
         if (!$post_id) {
             echo '<p style="color:green;">✅ No active notification process.</p>';
@@ -3035,10 +2929,8 @@ function twwt_display_notification_widget() {
                 echo '<ul>';
                 echo '<li><strong>🔗 Product:</strong> <a href="' . esc_url(get_edit_post_link($post_id)) . '">' . esc_html($post->post_title) . '</a> (ID: ' . intval($post_id) . ')</li>';
 
-                // Count users already marked as notified for this product.
                 $notified_count = 0;
 
-                // If site small, simple loop; otherwise use paged loop
                 $threshold = 2000;
                 if ($total_customers <= $threshold) {
                     $users = get_users(array('role' => 'customer', 'fields' => 'ID'));
@@ -3050,7 +2942,6 @@ function twwt_display_notification_widget() {
                     }
                     echo '<li><strong>👥 Users Notified:</strong> ' . number_format_i18n($notified_count) . '</li>';
                 } else {
-                    // Use paged WP_User_Query to avoid memory spikes
                     $per_page = 500;
                     $paged = 1;
                     $found = 0;
@@ -3086,7 +2977,6 @@ function twwt_display_notification_widget() {
 
         if ($queued_count > 0) {
             echo '<ul style="margin-left:0;padding-left:1.1rem;">';
-            // To avoid timeouts, if > 2000 users we avoid per-post detailed counting unless admin requests it.
             $do_counts = ($total_customers <= 2000);
 
             foreach ($queue as $pid) {
@@ -3117,14 +3007,12 @@ function twwt_display_notification_widget() {
             echo '<p style="color:green;">✅ Nothing queued for the next batch.</p>';
         }
 
-        // Show scheduling info
         $next_ts = wp_next_scheduled('twwt_daily_batch_hook');
         $last_sent = get_option('twwt_last_batch_sent', 0);
         echo '<p><strong>⏱️ Next scheduled run:</strong> ' . esc_html($fmt_ts($next_ts)) . ' (site timezone)</p>';
         if ($last_sent) {
             echo '<p><strong>✅ Last batch sent:</strong> ' . esc_html($fmt_ts($last_sent)) . '</p>';
         }
-        // Provide quick action links (run now) if WP Cron control plugin available - admin can use Tools -> Cron Events
         echo '<p style="font-size:90%;color:#666;">Tip: to run immediately for testing use your manual batch-run helper or Tools → Cron Events → Run Now.</p>';
     }
 
@@ -3140,38 +3028,38 @@ function twwt_debug_variation_save($variation_id, $i) {
         '_manage_stock'=> get_post_meta($variation_id, '_manage_stock', true),
         '_stock_status'=> get_post_meta($variation_id, '_stock_status', true),
     );
-    //error_log("TWWT DEBUG BEFORE SAVE: var={$variation_id} idx={$i} " . print_r($before, true));
-
-    // log posted admin values (common names; may vary by WC version)
     $posted = array(
         'variable_manage_stock' => isset($_POST['variable_manage_stock'][$i]) ? $_POST['variable_manage_stock'][$i] : null,
         'variable_stock'        => isset($_POST['variable_stock'][$i]) ? $_POST['variable_stock'][$i] : null,
         'variable_stock_status' => isset($_POST['variable_stock_status'][$i]) ? $_POST['variable_stock_status'][$i] : null,
     );
-    //error_log("TWWT DEBUG POST: " . print_r($posted, true));
-
-    // do a tiny delay to allow other hooks to run, then read again
     add_action('shutdown', function() use ($variation_id) {
         $after = array(
             '_stock'       => get_post_meta($variation_id, '_stock', true),
             '_manage_stock'=> get_post_meta($variation_id, '_manage_stock', true),
             '_stock_status'=> get_post_meta($variation_id, '_stock_status', true),
         );
-        //error_log("TWWT DEBUG AFTER SAVE (shutdown): var={$variation_id} " . print_r($after, true));
+
     });
 }
-/* CRON HANDLES */ 
-add_action( 'init', 'mycronhandle' ); 
-function mycronhandle(){ 
-    if(@$_GET['mycron']=="winner"){
-         twwt_send_msg_winner(); 
+/* CRON HANDLES */
+add_action( 'init', 'mycronhandle' );
+function mycronhandle(){
+    if ( ! isset($_GET['mycron']) ) {
+        return;
+    }
+    if ( ! current_user_can('manage_options') ) {
+        wp_die('Unauthorized request.', 'Forbidden', array('response' => 403));
+    }
+    if($_GET['mycron']=="winner"){
+         twwt_send_msg_winner();
          exit;
-        } else if(@$_GET['mycron']=="notification"){ 
-            twwt_send_np_notification(); 
-            exit; 
-        } else if(@$_GET['mycron']=="ottertext_batch_sync"){ 
-            twwt_ottertext_batch_sync(); 
-            exit; 
+        } else if($_GET['mycron']=="notification"){
+            twwt_send_np_notification();
+            exit;
+        } else if($_GET['mycron']=="ottertext_batch_sync"){
+            twwt_ottertext_batch_sync();
+            exit;
         }
 }
 

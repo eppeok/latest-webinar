@@ -5,7 +5,8 @@ if ( $product->is_purchasable() ) {
 	if(twwt_woo_product_seat($product_id)){
 ?>
         <style>
-table.variations, .woocommerce-variation.single_variation, .single_variation_wrap div.quantity, .single_variation_wrap .single_add_to_cart_button{
+table.variations, .woocommerce-variation.single_variation, .single_variation_wrap div.quantity, .single_variation_wrap .single_add_to_cart_button,
+form.cart > .quantity, form.cart > .single_add_to_cart_button, form.cart > button.single_add_to_cart_button{
 	border: 0;
 	clip: rect(1px, 1px, 1px, 1px);
 	-webkit-clip-path: inset(50%);
@@ -55,14 +56,31 @@ input[type=number]::-webkit-outer-spin-button {
 		}
 		else{
 		?>
-		<div class="ticket-dashboard">
+		<div class="ticket-dashboard" data-product-id="<?php echo esc_attr($product_id); ?>">
         <div class="ticket-wrapper">
         <?php
 		//$variations = $product->get_available_variations();
 		//print_r($variations);exit;
 		$product = wc_get_product($product_id);
 		$current_products = $product->get_children();
-		
+
+		// Fallback: if WC loaded product as Simple (no children), query variations directly
+		if ( empty($current_products) ) {
+			$current_products = get_posts( array(
+				'post_parent'  => $product_id,
+				'post_type'    => 'product_variation',
+				'post_status'  => array( 'publish', 'private' ),
+				'fields'       => 'ids',
+				'numberposts'  => -1,
+				'orderby'      => 'menu_order',
+				'order'        => 'ASC',
+			) );
+			// If we found variations, clear stale transients so next load is correct
+			if ( ! empty($current_products) ) {
+				wc_delete_product_transients( $product_id );
+			}
+		}
+
 		foreach($current_products as $item_id){
 			
 			$variation_price = get_variation_price_by_id($product_id, $item_id);

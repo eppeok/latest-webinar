@@ -1,19 +1,7 @@
 <?php
 function twwt_get_csv($product_id){
-	global $wpdb;
-	
-	$statuses = array_map( 'esc_sql', wc_get_is_paid_statuses() );
-	//print_r($statuses);
-	$order_ids = $wpdb->get_col("
-	   SELECT p.ID, pm.meta_value FROM {$wpdb->posts} AS p
-	   INNER JOIN {$wpdb->postmeta} AS pm ON p.ID = pm.post_id
-	   INNER JOIN {$wpdb->prefix}woocommerce_order_items AS i ON p.ID = i.order_id
-	   INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta AS im ON i.order_item_id = im.order_item_id
-	   WHERE p.post_status IN ( 'wc-" . implode( "','wc-", $statuses ) . "' )
-	   AND pm.meta_key IN ( '_billing_email' )
-	   AND im.meta_key IN ( '_product_id', '_variation_id' )
-	   AND im.meta_value = $product_id
-	");
+	$product_id = intval($product_id);
+	$order_ids = twwt_get_paid_order_ids_for_product( $product_id );
 	
 	$array = array();
 		array_push($array, array('Order ID', 'Screen Name', 'Winner', 'First Name', 'Last Name', 'Email', 'Phone', 'Seats'));
@@ -92,18 +80,14 @@ function array2csv(array &$array)
    return ob_get_clean();
 }
 function download_send_headers($filename) {
-		// disable caching
 	$now = gmdate("D, d M Y H:i:s");
 	header("Expires: Tue, 03 Jul 2001 06:00:00 GMT");
 	header("Cache-Control: max-age=0, no-cache, must-revalidate, proxy-revalidate");
 	header("Last-Modified: {$now} GMT");
-
-	// force download  
 	header("Content-Type: application/force-download");
 	header("Content-Type: application/octet-stream");
 	header("Content-Type: application/download");
 
-	// disposition / encoding on response body
 	header("Content-Disposition: attachment;filename={$filename}");
 	header("Content-Transfer-Encoding: binary");
 }

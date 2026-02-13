@@ -1,6 +1,4 @@
 <?php
-
-// Set up settings defaults
 register_activation_hook(__FILE__, 'twwt_woo_set_options');
 function twwt_woo_set_options (){
 	$defaults = array(
@@ -13,81 +11,108 @@ function twwt_woo_set_options (){
 		'video_show' => 1,
 		'bootstrap_show' => 1,
 		'default_webinar_category' => '',
-		'winner' => 0,
-		'enable_livestrom' => 0,
-		'token' => '',
-		'owner_id' => '',
-		'copy_from_event_id' => '',
+		'winner' => 1,
 		'id' => '',
 		'twilio_sid' => '',
 		'twilio_token' => '',
 		'twilio_from' => '',
-
-		/* ==== NEW (OtterText) ==== */
-		'sms_provider'       => 'twilio', // 'twilio' (default) | 'ottertext'
+		'sms_provider'       => 'twilio',
 		'ottertext_api_key'  => '',
 		'ottertext_partner'  => '',
-		/* ========================= */
-
-		'new_product_notification_sub' => '',
-		'new_product_notification' => '',
-		'wwinner_notification_sub' => '',
-		'wwinner_notification' => '',
-		'winner_noti_others_sub' => '',
-		'winner_noti_others' => '',
-		'ezoom_notification_sub' => '',
-		'ezoom_notification' => '',
-		'elivestrom_notification_sub' => '',
-		'elivestrom_notification' => '',
-		'sms_new_product_notification' => '',
-		'sms_wwinner_notification' => '',
-		'sms_winner_noti_others' => '',
-		'sms_zoom_notification' => '',
-		'sms_livestrom_notification' => '',
+		'aiq_api_key'        => '',
+		'new_product_notification_sub' => 'New Webinar Available: %product_name%',
+		'new_product_notification' => '<p>Hi %first_name%,</p><p>A new webinar is now available: <strong>%product_name%</strong>.</p><p><a href="%url%">Book your seat now</a></p>',
+		'wwinner_notification_sub' => 'Congratulations! You won the %product_name% raffle!',
+		'wwinner_notification' => '<p>Hi %first_name%,</p><p>Congratulations! You have been selected as the winner for <strong>%product_name%</strong>!</p><p>Your screen name: %screen_name%</p><p>Thank you for participating!</p>',
+		'winner_noti_others_sub' => 'Winner Announced for %product_name%',
+		'winner_noti_others' => '<p>Hi %first_name%,</p><p>The winner for <strong>%product_name%</strong> has been selected: <strong>%screen_name%</strong>.</p><p>Thank you for participating!</p>',
+		'ezoom_notification_sub' => 'Your Webinar Details: %product_name%',
+		'ezoom_notification' => '<p>Hi %first_name%,</p><p>Here are your webinar details for <strong>%product_name%</strong>:</p><p>Event URL: <a href="%event_url%">%event_url%</a><br>Event Time: %event_time%</p><p>See you there!</p>',
+		'sms_new_product_notification' => 'Hi %first_name%! New webinar available: %product_name%. Book now: %url%',
+		'sms_wwinner_notification' => 'Congrats %first_name%! You won the %product_name% raffle! Screen name: %screen_name%',
+		'sms_winner_noti_others' => 'Winner for %product_name% has been announced: %screen_name%. Thanks for participating!',
+		'sms_zoom_notification' => 'Hi %first_name%! Your webinar %product_name% is at %event_time%. Join: %event_url%',
 		'batch_new_product_notification_sub' => 'Today\'s New Webinars',
-		'batch_new_product_notification'     => '',
-		'sms_batch_new_product_notification' => '',
+		'batch_new_product_notification'     => '<p>Hi %first_name%,</p><p>Here are today\'s new webinars:</p>%webinar_list%<p>Don\'t miss out — book your seat today!</p>',
+		'sms_batch_new_product_notification' => 'New webinars available: %webinar_titles%. Book now: %url%',
 		'twwt_plugin_license_key' => '',
 		'notification_mode' => 'immediate',
-		'notification_batch_time' => '09:00'
+		'notification_batch_time' => '09:00',
+		'seat_hold_minutes' => 10,
+		'winner_primary_color' => '#d63638',
+		'winner_primary_hover' => '#b32d2f',
+		'winner_table_header_bg' => '#f5f5f5',
+		'winner_button_text' => '#ffffff',
 	);
 	add_option('twwt_woo_settings', $defaults);
 }
-// Clean up on uninstall
-// Clean up on uninstall — use deactivation hook (was incorrectly using activation hook)
+
+// One-time migration: backfill empty template fields with sensible defaults
+add_action( 'admin_init', 'twwt_backfill_template_defaults' );
+function twwt_backfill_template_defaults() {
+	if ( get_option( 'twwt_templates_backfilled_v1' ) ) {
+		return;
+	}
+	update_option( 'twwt_templates_backfilled_v1', 1 );
+
+	$settings = get_option( 'twwt_woo_settings', array() );
+	$template_defaults = array(
+		'new_product_notification_sub' => 'New Webinar Available: %product_name%',
+		'new_product_notification' => '<p>Hi %first_name%,</p><p>A new webinar is now available: <strong>%product_name%</strong>.</p><p><a href="%url%">Book your seat now</a></p>',
+		'wwinner_notification_sub' => 'Congratulations! You won the %product_name% raffle!',
+		'wwinner_notification' => '<p>Hi %first_name%,</p><p>Congratulations! You have been selected as the winner for <strong>%product_name%</strong>!</p><p>Your screen name: %screen_name%</p><p>Thank you for participating!</p>',
+		'winner_noti_others_sub' => 'Winner Announced for %product_name%',
+		'winner_noti_others' => '<p>Hi %first_name%,</p><p>The winner for <strong>%product_name%</strong> has been selected: <strong>%screen_name%</strong>.</p><p>Thank you for participating!</p>',
+		'ezoom_notification_sub' => 'Your Webinar Details: %product_name%',
+		'ezoom_notification' => '<p>Hi %first_name%,</p><p>Here are your webinar details for <strong>%product_name%</strong>:</p><p>Event URL: <a href="%event_url%">%event_url%</a><br>Event Time: %event_time%</p><p>See you there!</p>',
+		'sms_new_product_notification' => 'Hi %first_name%! New webinar available: %product_name%. Book now: %url%',
+		'sms_wwinner_notification' => 'Congrats %first_name%! You won the %product_name% raffle! Screen name: %screen_name%',
+		'sms_winner_noti_others' => 'Winner for %product_name% has been announced: %screen_name%. Thanks for participating!',
+		'sms_zoom_notification' => 'Hi %first_name%! Your webinar %product_name% is at %event_time%. Join: %event_url%',
+		'batch_new_product_notification_sub' => 'Today\'s New Webinars',
+		'batch_new_product_notification' => '<p>Hi %first_name%,</p><p>Here are today\'s new webinars:</p>%webinar_list%<p>Don\'t miss out — book your seat today!</p>',
+		'sms_batch_new_product_notification' => 'New webinars available: %webinar_titles%. Book now: %url%',
+		'winner_primary_color' => '#d63638',
+		'winner_primary_hover' => '#b32d2f',
+		'winner_table_header_bg' => '#f5f5f5',
+		'winner_button_text' => '#ffffff',
+	);
+	$changed = false;
+	foreach ( $template_defaults as $key => $default_val ) {
+		if ( empty( $settings[ $key ] ) ) {
+			$settings[ $key ] = $default_val;
+			$changed = true;
+		}
+	}
+	if ( $changed ) {
+		update_option( 'twwt_woo_settings', $settings );
+	}
+}
+
 register_deactivation_hook( __FILE__, 'twwt_woo_deactivate' );
 function twwt_woo_deactivate(){
     delete_option('twwt_woo_settings');
 }
 
 
-// Render the settings page
 class twwt_woo_settings_page {
-	// Holds the values to be used in the fields callbacks
 	private $options;
 			
-	// Start up
 	public function __construct() {
 			add_action( 'admin_menu', array( $this, 'add_plugin_page' ) );
 			add_action( 'admin_init', array( $this, 'page_init' ) );
 	}
 			
-	// Add settings page
 	public function add_plugin_page() {
-		//add_submenu_page('edit.php?post_type=twwt_woo', 'Settings',  'Settings', 'manage_options', 'twabc-settings', array($this,'create_admin_page'));	
 		add_menu_page( 'Review Raffles', 'Review Raffles', 'administrator', 'review-raffles', array($this,'create_admin_page'), 'dashicons-tickets-alt' );
-		//submenu page new
 		add_submenu_page('review-raffles', 'License Settings', 'License', 'manage_options', 'twwt-plugin-license', array($this, 'twwt_plugin_license_page'));
 	}
 						
-	// Options page callback
 	public function create_admin_page() {
 		 if (!$this->twwt_license_key_valid()) {
-            // Redirect to the license page if the license is invalid
             wp_redirect(admin_url('admin.php?page=twwt-plugin-license'));
             exit;
         }
-		// Set class property
 		$this->options = get_option( 'twwt_woo_settings' );
 		if(!$this->options){
 			twwt_woo_set_options();
@@ -95,324 +120,399 @@ class twwt_woo_settings_page {
 		}
 		?>
 		<div class="wrap">
-							 
-				<form method="post" action="options.php">
+
+				<form method="post" action="options.php" autocomplete="off">
+				<!-- Hidden dummy fields to absorb Chrome autofill -->
+				<input type="text" name="twwt_fake_user" style="display:none" tabindex="-1" autocomplete="username" />
+				<input type="password" name="twwt_fake_pass" style="display:none" tabindex="-1" autocomplete="current-password" />
 				<?php
-						settings_fields( 'twwt_woo_settings' );   
+						settings_fields( 'twwt_woo_settings' );
 						do_settings_sections( 'twwt_woo-settings' );
-						submit_button(); 
+						submit_button();
 				?>
 				</form>
 		</div>
 		<?php
 	}
 
-
-	// submenu page callback function 
 	public function twwt_plugin_license_page() {
 		$this->options = get_option( 'twwt_plugin_license_options' );
 				if(!$this->options){
 					twwt_woo_set_options();
 					$this->options = get_option( 'twwt_plugin_license_options' );
-				}				
+				}
+
+		// Handle manual license test
+		$test_results = null;
+		if ( isset( $_POST['twwt_test_license'] ) && check_admin_referer( 'twwt_test_license_nonce' ) ) {
+			// Clear all caches to force a fresh remote check
+			delete_transient( 'twwt_license_valid_cache' );
+			delete_option( 'twwt_plugin_local_key' );
+
+			$license_key = isset( $this->options['twwt_plugin_license_key'] )
+				? sanitize_text_field( $this->options['twwt_plugin_license_key'] )
+				: '';
+
+			if ( ! empty( $license_key ) ) {
+				$test_results = $this->firearm_check_license( $license_key, '' );
+				// Re-cache if active
+				if ( isset( $test_results['status'] ) && $test_results['status'] == 'Active' ) {
+					if ( ! empty( $test_results['localkey'] ) ) {
+						update_option( 'twwt_plugin_local_key', $test_results['localkey'] );
+					}
+					set_transient( 'twwt_license_valid_cache', 'yes', DAY_IN_SECONDS );
+				} else {
+					set_transient( 'twwt_license_valid_cache', 'no', DAY_IN_SECONDS );
+				}
+			} else {
+				$test_results = array( 'status' => 'Error', 'description' => 'No license key entered.' );
+			}
+		}
+
 	    ?>
-	   		<div class="wrap">								 
-					<form method="post" action="options.php">
+	   		<div class="wrap">
+					<form method="post" action="options.php" autocomplete="off">
 					<?php
-							settings_fields( 'twwt_plugin_license_options' );   
+							settings_fields( 'twwt_plugin_license_options' );
 							do_settings_sections( 'twwt_plugin_license_options' );
-							submit_button(); 
+							submit_button();
 					?>
 					</form>
+
+					<hr />
+					<h2>Test License Connection</h2>
+					<p>Clears the 24-hour cache and sends a live validation request to the WHMCS server. Check your WHMCS System Activity Log after clicking.</p>
+					<form method="post">
+						<?php wp_nonce_field( 'twwt_test_license_nonce' ); ?>
+						<input type="submit" name="twwt_test_license" class="button button-secondary" value="Test License Now" />
+					</form>
+
+					<?php if ( $test_results !== null ) : ?>
+					<div style="margin-top: 15px; padding: 15px; background: #fff; border: 1px solid #ccd0d4; border-left: 4px solid <?php echo ( isset($test_results['status']) && $test_results['status'] === 'Active' ) ? '#00a32a' : '#d63638'; ?>;">
+						<h3 style="margin-top:0;">WHMCS Response</h3>
+						<table class="widefat striped" style="max-width: 600px;">
+							<tbody>
+							<?php foreach ( $test_results as $key => $value ) :
+								if ( $key === 'localkey' ) { $value = substr( $value, 0, 40 ) . '...'; }
+							?>
+								<tr>
+									<td><strong><?php echo esc_html( $key ); ?></strong></td>
+									<td><?php echo esc_html( $value ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+							</tbody>
+						</table>
+						<p style="margin-top:10px;color:#666;">
+							Tested at: <?php echo esc_html( current_time( 'Y-m-d H:i:s' ) ); ?><br>
+							Domain sent: <code><?php echo esc_html( $_SERVER['SERVER_NAME'] ); ?></code><br>
+							IP sent: <code><?php echo esc_html( isset($_SERVER['SERVER_ADDR']) ? $_SERVER['SERVER_ADDR'] : ( isset($_SERVER['LOCAL_ADDR']) ? $_SERVER['LOCAL_ADDR'] : 'unknown' ) ); ?></code><br>
+							Directory sent: <code><?php echo esc_html( dirname( __FILE__ ) ); ?></code>
+						</p>
+					</div>
+					<?php endif; ?>
 			</div>
 	    <?php
 	}
 
 			
-	// Register and add settings
-	public function page_init() {		
+	public function sanitize( $input ) {
+		if ( ! is_array( $input ) ) {
+			return array();
+		}
+		$sanitized = array();
+		$text_fields = array(
+			'login_button_text',
+			'twilio_sid', 'twilio_token', 'twilio_from',
+			'ottertext_api_key', 'ottertext_partner', 'aiq_api_key',
+			'new_product_notification_sub', 'wwinner_notification_sub',
+			'winner_noti_others_sub', 'ezoom_notification_sub',
+			'batch_new_product_notification_sub',
+			'sms_new_product_notification', 'sms_wwinner_notification',
+			'sms_winner_noti_others', 'sms_zoom_notification',
+			'sms_batch_new_product_notification',
+			'notification_batch_time', 'twwt_plugin_license_key',
+		);
+		$color_fields = array(
+			'winner_primary_color', 'winner_primary_hover',
+			'winner_table_header_bg', 'winner_button_text',
+		);
+		$html_fields = array(
+			'new_product_notification', 'wwinner_notification',
+			'winner_noti_others', 'ezoom_notification',
+			'batch_new_product_notification',
+		);
+		$int_fields = array(
+			'login_restrict', 'randomGenerator_restrict', 'producttab',
+			'winner_noto_others', 'enable_notification', 'video_show',
+			'bootstrap_show', 'winner',
+			'default_webinar_category', 'seat_hold_minutes',
+		);
+		foreach ( $text_fields as $key ) {
+			$sanitized[$key] = isset($input[$key]) ? sanitize_text_field($input[$key]) : '';
+		}
+		foreach ( $html_fields as $key ) {
+			$sanitized[$key] = isset($input[$key]) ? wp_kses_post($input[$key]) : '';
+		}
+		foreach ( $int_fields as $key ) {
+			$sanitized[$key] = isset($input[$key]) ? intval($input[$key]) : 0;
+		}
+		foreach ( $color_fields as $key ) {
+			$sanitized[$key] = isset($input[$key]) && preg_match('/^#[0-9a-fA-F]{6}$/', $input[$key])
+				? $input[$key]
+				: '';
+		}
+		if ( isset($input['sms_provider']) && in_array($input['sms_provider'], array('twilio', 'ottertext', 'aiq'), true) ) {
+			$sanitized['sms_provider'] = $input['sms_provider'];
+		} else {
+			$sanitized['sms_provider'] = 'twilio';
+		}
+		if ( isset($input['notification_mode']) && in_array($input['notification_mode'], array('immediate', 'daily'), true) ) {
+			$sanitized['notification_mode'] = $input['notification_mode'];
+		} else {
+			$sanitized['notification_mode'] = 'immediate';
+		}
+		return $sanitized;
+	}
+
+	public function page_init() {
 		register_setting(
-				'twwt_woo_settings', // Option group
-				'twwt_woo_settings', // Option name
-				array( $this, 'sanitize' ) // Sanitize
+				'twwt_woo_settings',
+				'twwt_woo_settings',
+				array( $this, 'sanitize' )
 		);
 		
-        // Sections
 		add_settings_section(
-				'twwt_woo_settings_behaviour', // ID
-				'Review Raffles Basic Settings', // Title
-				array( $this, 'twwt_woo_settings_behaviour_header' ), // Callback
-				'twwt_woo-settings' // Page
-		);
-		// Sections #2
-		add_settings_section(
-				'twwt_woo_settings_livestrom', // ID
-				'Livestrom Settings', // Title
-				array( $this, 'twwt_woo_settings_livestrom_header' ), // Callback
-				'twwt_woo-settings' // Page
-		);
-		// Sections #3
-		add_settings_section(
-				'twwt_woo_settings_twilio', // ID
-				'Twilio Settings', // Title
-				array( $this, 'twwt_woo_settings_twilio_header' ), // Callback
-				'twwt_woo-settings' // Page
-		);
-		
-		/* ==== NEW (OtterText) - SMS Provider Section ==== */
-		add_settings_section(
-				'twwt_woo_settings_sms_provider', // ID
-				'SMS Provider', // Title
-				array( $this, 'twwt_woo_settings_sms_provider_header' ), // Callback
-				'twwt_woo-settings' // Page
+				'twwt_woo_settings_behaviour',
+				'Review Raffles Basic Settings',
+				array( $this, 'twwt_woo_settings_behaviour_header' ),
+				'twwt_woo-settings'
 		);
 
-		// Provider select
-		add_settings_field(
-				'sms_provider', // ID
-				'Active Provider', // Title
-				array( $this, 'sms_provider_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_sms_provider' // Section
-		);
-
-		// OtterText API key
-		add_settings_field(
-				'ottertext_api_key', // ID
-				'OtterText API Key', // Title
-				array( $this, 'ottertext_api_key_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_sms_provider' // Section
-		);
-
-		// OtterText Partner (optional)
-		add_settings_field(
-				'ottertext_partner', // ID
-				'OtterText Partner (optional)', // Title
-				array( $this, 'ottertext_partner_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_sms_provider' // Section
-		);
-		/* ================================================ */
-		
-		// Sections #4
 		add_settings_section(
-				'twwt_woo_settings_email_template', // ID
-				'Email Template', // Title
-				array( $this, 'twwt_woo_settings_email_template_header' ), // Callback
-				'twwt_woo-settings' // Page
+				'twwt_woo_settings_twilio',
+				'Twilio Settings',
+				array( $this, 'twwt_woo_settings_twilio_header' ),
+				'twwt_woo-settings'
 		);
 		
-		// Sections #5
 		add_settings_section(
-				'twwt_woo_settings_sms_content', // ID
-				'SMS Content', // Title
-				array( $this, 'twwt_woo_settings_sms_content_header' ), // Callback
-				'twwt_woo-settings' // Page
+				'twwt_woo_settings_sms_provider',
+				'SMS Provider',
+				array( $this, 'twwt_woo_settings_sms_provider_header' ),
+				'twwt_woo-settings'
+		);
+
+		add_settings_field(
+				'sms_provider',
+				'Active Provider',
+				array( $this, 'sms_provider_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_sms_provider'
+		);
+
+		add_settings_field(
+				'ottertext_api_key',
+				'OtterText API Key',
+				array( $this, 'ottertext_api_key_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_sms_provider'
+		);
+
+		add_settings_field(
+				'ottertext_partner',
+				'OtterText Partner (optional)',
+				array( $this, 'ottertext_partner_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_sms_provider'
+		);
+
+		add_settings_field(
+			'aiq_api_key',
+			'AIQ API Key',
+			array( $this, 'aiq_api_key_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_sms_provider'
+		);
+
+		add_settings_section(
+				'twwt_woo_settings_email_template',
+				'Email Template',
+				array( $this, 'twwt_woo_settings_email_template_header' ),
+				'twwt_woo-settings'
+		);
+		
+		add_settings_section(
+				'twwt_woo_settings_sms_content',
+				'SMS Content',
+				array( $this, 'twwt_woo_settings_sms_content_header' ),
+				'twwt_woo-settings'
 		);
         
-		// Behaviour Fields
 		add_settings_field(
-			'randomGenerator_restrict', // ID
-			'Random Seat Generator', // Title
-			array( $this, 'randomGenerator_restrict_callback' ), // Callback randomGenerator_restrict
-			'twwt_woo-settings', // Page
-			'twwt_woo_settings_behaviour' // Section
-		);
-		// Behaviour Fields
-		add_settings_field(
-			'winner_noto_others', // ID
-			'Winner Notification to Others', // Title
-			array( $this, 'winner_noto_others_callback' ), // Callback winner_noto_others
-			'twwt_woo-settings', // Page
-			'twwt_woo_settings_behaviour' // Section
-		);
-		add_settings_field(
-			'producttab', // ID
-			'Enable Participant Tab', // Title
-			array( $this, 'producttab_callback' ), // Callback producttab
-			'twwt_woo-settings', // Page
-			'twwt_woo_settings_behaviour' // Section
-		);
-		add_settings_field(
-				'login_restrict', // ID
-				'Login Restriction', // Title
-				array( $this, 'login_restrict_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_behaviour' // Section
-		);
-		add_settings_field(
-				'login_button_text', // ID
-				'Login Button Text', // Title
-				array( $this, 'login_button_text_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_behaviour' // Section
-		);
-		add_settings_field(
-				'winner', // ID
-				'Enable Winner Selection', // Title
-				array( $this, 'winner_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_behaviour' // Section
-		);
-		add_settings_field(
-				'enable_notification', // ID
-				'Enable Notification', // Title
-				array( $this, 'enable_notification_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_behaviour' // Section
-		);
-		// Notification mode (Immediate | Daily)
-		add_settings_field(
-			'notification_mode', // ID
-			'Notification Mode', // Title
-			array( $this, 'notification_mode_callback' ), // Callback
-			'twwt_woo-settings', // Page
-			'twwt_woo_settings_behaviour' // Section
-		);
-
-		// Batch time for daily mode
-		add_settings_field(
-			'notification_batch_time', // ID
-			'Batch Time (HH:MM)', // Title
-			array( $this, 'notification_batch_time_callback' ), // Callback
-			'twwt_woo-settings', // Page
-			'twwt_woo_settings_behaviour' // Section
+			'randomGenerator_restrict',
+			'Random Seat Generator',
+			array( $this, 'randomGenerator_restrict_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_behaviour'
 		);
 
 		add_settings_field(
-				'video_show', // ID
-				'Show Video', // Title
-				array( $this, 'video_show_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_behaviour' // Section
+			'winner_noto_others',
+			'Winner Notification to Others',
+			array( $this, 'winner_noto_others_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_behaviour'
 		);
 		add_settings_field(
-				'bootstrap_show', // ID
-				'Add Bootstrap To Winner Page', // Title
-				array( $this, 'bootstrap_show_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_behaviour' // Section
+			'producttab',
+			'Enable Participant Tab',
+			array( $this, 'producttab_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_behaviour'
 		);
 		add_settings_field(
-				'enable_livestrom', // ID
-				'Enable Livestrom', // Title
-				array( $this, 'enable_livestrom_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_livestrom' // Section
+				'login_restrict',
+				'Login Restriction',
+				array( $this, 'login_restrict_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_behaviour'
 		);
 		add_settings_field(
-				'token', // ID
-				'Token', // Title
-				array( $this, 'token_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_livestrom' // Section
+				'login_button_text',
+				'Login Button Text',
+				array( $this, 'login_button_text_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_behaviour'
 		);
 		add_settings_field(
-				'owner_id', // ID
-				'Owner ID', // Title
-				array( $this, 'owner_id_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_livestrom' // Section
+				'winner',
+				'Enable Winner Selection',
+				array( $this, 'winner_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_behaviour'
 		);
 		add_settings_field(
-				'copy_from_event_id', // ID
-				'Copy From Event ID', // Title
-				array( $this, 'copy_from_event_id_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_livestrom' // Section
+				'enable_notification',
+				'Enable Notification',
+				array( $this, 'enable_notification_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_behaviour'
 		);
-		
+
 		add_settings_field(
-				'twilio_sid', // ID
-				'SID', // Title
-				array( $this, 'twilio_sid_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_twilio' // Section
+			'notification_mode',
+			'Notification Mode',
+			array( $this, 'notification_mode_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_behaviour'
 		);
+
 		add_settings_field(
-				'twilio_token', // ID
-				'Token', // Title
-				array( $this, 'twilio_token_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_twilio' // Section
+			'notification_batch_time',
+			'Batch Time (HH:MM)',
+			array( $this, 'notification_batch_time_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_behaviour'
 		);
+
 		add_settings_field(
-				'twilio_from', // ID
-				'From Number', // Title
-				array( $this, 'twilio_from_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_twilio' // Section
+			'seat_hold_minutes',
+			'Seat Hold Timer (minutes)',
+			array( $this, 'seat_hold_minutes_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_behaviour'
 		);
+
 		add_settings_field(
-				'new_product_notification_sub', // ID
-				'New Product Notification<br>(Subject)', // Title
-				array( $this, 'new_product_notification_sub_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
-		);
-		add_settings_field(
-				'new_product_notification', // ID
-				'New Product Notification<br>(Email Body)', // Title
-				array( $this, 'new_product_notification_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
+				'video_show',
+				'Show Video',
+				array( $this, 'video_show_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_behaviour'
 		);
 		add_settings_field(
-				'wwinner_notification_sub', // ID
-				'Winner Notification to Winner (Subject)', // Title
-				array( $this, 'wwinner_notification_sub_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
+				'bootstrap_show',
+				'Add Bootstrap To Winner Page',
+				array( $this, 'bootstrap_show_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_behaviour'
 		);
 		add_settings_field(
-				'wwinner_notification', // ID
-				'Winner Notification to Winner (Email Body)', // Title
-				array( $this, 'wwinner_notification_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
+				'twilio_sid',
+				'SID',
+				array( $this, 'twilio_sid_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_twilio'
 		);
 		add_settings_field(
-				'winner_noti_others_sub', // ID
-				'Winner Notification to Others (Subject)', // Title
-				array( $this, 'winner_noti_others_sub_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
+				'twilio_token',
+				'Token',
+				array( $this, 'twilio_token_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_twilio'
 		);
 		add_settings_field(
-				'winner_noti_others', // ID
-				'Winner Notification to Others (Email Body)', // Title
-				array( $this, 'winner_noti_others_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
+				'twilio_from',
+				'From Number',
+				array( $this, 'twilio_from_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_twilio'
 		);
 		add_settings_field(
-				'ezoom_notification_sub', // ID
-				'Zoom Notification <br>(Subject)', // Title
-				array( $this, 'ezoom_notification_sub_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
+				'new_product_notification_sub',
+				'New Product Notification<br>(Subject)',
+				array( $this, 'new_product_notification_sub_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_email_template'
 		);
 		add_settings_field(
-				'ezoom_notification', // ID
-				'Zoom Notification <br>(Email Body)', // Title
-				array( $this, 'ezoom_notification_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
+				'new_product_notification',
+				'New Product Notification<br>(Email Body)',
+				array( $this, 'new_product_notification_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_email_template'
 		);
 		add_settings_field(
-				'elivestrom_notification_sub', // ID
-				'LiveStrom Notification<br>(Subject)', // Title
-				array( $this, 'elivestrom_notification_sub_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
+				'wwinner_notification_sub',
+				'Winner Notification to Winner (Subject)',
+				array( $this, 'wwinner_notification_sub_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_email_template'
 		);
 		add_settings_field(
-				'elivestrom_notification', // ID
-				'LiveStrom Notification<br>(Email Body)', // Title
-				array( $this, 'elivestrom_notification_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_email_template' // Section
+				'wwinner_notification',
+				'Winner Notification to Winner (Email Body)',
+				array( $this, 'wwinner_notification_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_email_template'
+		);
+		add_settings_field(
+				'winner_noti_others_sub',
+				'Winner Notification to Others (Subject)',
+				array( $this, 'winner_noti_others_sub_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_email_template'
+		);
+		add_settings_field(
+				'winner_noti_others',
+				'Winner Notification to Others (Email Body)',
+				array( $this, 'winner_noti_others_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_email_template'
+		);
+		add_settings_field(
+				'ezoom_notification_sub',
+				'Zoom Notification <br>(Subject)',
+				array( $this, 'ezoom_notification_sub_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_email_template'
+		);
+		add_settings_field(
+				'ezoom_notification',
+				'Zoom Notification <br>(Email Body)',
+				array( $this, 'ezoom_notification_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_email_template'
 		);
 		add_settings_field(
 			'batch_new_product_notification_sub',
@@ -431,39 +531,32 @@ class twwt_woo_settings_page {
 		);
 
 		add_settings_field(
-				'sms_new_product_notification', // ID
-				'New Product Notification<br>(SMS)', // Title
-				array( $this, 'sms_new_product_notification_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_sms_content' // Section
+				'sms_new_product_notification',
+				'New Product Notification<br>(SMS)',
+				array( $this, 'sms_new_product_notification_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_sms_content'
 		);
 		add_settings_field(
-				'sms_wwinner_notification', // ID
-				'Winner Notification to Winner (SMS)', // Title
-				array( $this, 'sms_wwinner_notification_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_sms_content' // Section
+				'sms_wwinner_notification',
+				'Winner Notification to Winner (SMS)',
+				array( $this, 'sms_wwinner_notification_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_sms_content'
 		);
 		add_settings_field(
-				'sms_winner_noti_others', // ID
-				'Winner Notification to Others SMS)', // Title
-				array( $this, 'sms_winner_noti_others_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_sms_content' // Section
+				'sms_winner_noti_others',
+				'Winner Notification to Others SMS)',
+				array( $this, 'sms_winner_noti_others_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_sms_content'
 		);
 		add_settings_field(
-				'sms_zoom_notification', // ID
-				'Zoom Notification<br>(SMS)', // Title
-				array( $this, 'sms_zoom_notification_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_sms_content' // Section
-		);
-		add_settings_field(
-				'sms_livestrom_notification', // ID
-				'Livestrom Event Notification (SMS)', // Title
-				array( $this, 'sms_livestrom_notification_callback' ), // Callback
-				'twwt_woo-settings', // Page
-				'twwt_woo_settings_sms_content' // Section
+				'sms_zoom_notification',
+				'Zoom Notification<br>(SMS)',
+				array( $this, 'sms_zoom_notification_callback' ),
+				'twwt_woo-settings',
+				'twwt_woo_settings_sms_content'
 		);
 		add_settings_field(
 			'sms_batch_new_product_notification',
@@ -473,29 +566,25 @@ class twwt_woo_settings_page {
 			'twwt_woo_settings_sms_content'
 		);
 
-		// submenu setting 
 		register_setting(
-				'twwt_plugin_license_options', // Option group
-				'twwt_plugin_license_options', // Option name
-				array( $this, 'sanitize' ) // Sanitize
+				'twwt_plugin_license_options',
+				'twwt_plugin_license_options',
+				array( $this, 'sanitize' )
 		);
 
-		// submenu setting section 
-		  // Add a settings section
         add_settings_section(
-            'twwt_plugin_license_options_behaviour', // ID
-            'License Settings', // Title
-            array($this, 'licence_section_info'), // Callback
-            'twwt_plugin_license_options' // Page
+            'twwt_plugin_license_options_behaviour',
+            'License Settings',
+            array($this, 'licence_section_info'),
+            'twwt_plugin_license_options'
         );
 
-       // submenu setting field new
         add_settings_field(
-            'twwt_plugin_license_key', // ID
-            'License Key', // Title
-            array($this, 'license_key_callback'), // Callback
-            'twwt_plugin_license_options', // Page
-            'twwt_plugin_license_options_behaviour' // Section
+            'twwt_plugin_license_key',
+            'License Key',
+            array($this, 'license_key_callback'),
+            'twwt_plugin_license_options',
+            'twwt_plugin_license_options_behaviour'
         );
 
 		add_settings_field(
@@ -506,22 +595,55 @@ class twwt_woo_settings_page {
 			'twwt_woo_settings_behaviour'
 		);
 
+		// --- Winner Page Appearance ---
+		add_settings_section(
+			'twwt_woo_settings_winner_colors',
+			'Winner Page Appearance',
+			array( $this, 'twwt_woo_settings_winner_colors_header' ),
+			'twwt_woo-settings'
+		);
+
+		add_settings_field(
+			'winner_primary_color',
+			'Primary Color',
+			array( $this, 'winner_primary_color_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_winner_colors'
+		);
+
+		add_settings_field(
+			'winner_primary_hover',
+			'Primary Hover Color',
+			array( $this, 'winner_primary_hover_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_winner_colors'
+		);
+
+		add_settings_field(
+			'winner_table_header_bg',
+			'Table Header Background',
+			array( $this, 'winner_table_header_bg_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_winner_colors'
+		);
+
+		add_settings_field(
+			'winner_button_text',
+			'Button Text Color',
+			array( $this, 'winner_button_text_callback' ),
+			'twwt_woo-settings',
+			'twwt_woo_settings_winner_colors'
+		);
+
 	}
 
-
-	// Sanitize each setting field as needed -  @param array $input Contains all settings fields as array keys		
-	// Print the Section text
 	public function twwt_woo_settings_behaviour_header() {
-            echo '<p>'.__('Settings for Review Raffles.', 'twwt_woo-settings').'</p>';
-	}
-	public function twwt_woo_settings_livestrom_header() {
-            echo '<p>'.__('Settings for Livestrom.', 'twwt_woo-settings').'</p>';
+            echo '<p>General plugin behavior: notifications, winner selection, login restrictions, and display options.</p>';
 	}
 	public function twwt_woo_settings_twilio_header() {
-            echo '<p>'.__('Settings for Twilio.', 'twwt_woo-settings').'</p>';
+            echo '<p>Enter your Twilio account credentials. Required when using Twilio as the SMS provider.</p>';
 	}
 
-	/* ==== NEW (OtterText) ==== */
 	public function twwt_woo_settings_sms_provider_header() {
 		echo '<p>Select which SMS provider to use. Keep your Twilio settings as-is; set OtterText API key if choosing OtterText.</p>';
 	}
@@ -532,6 +654,7 @@ class twwt_woo_settings_page {
 		<select id="sms_provider" name="twwt_woo_settings[sms_provider]">
 			<option value="twilio"   <?php selected($val, 'twilio'); ?>>Twilio</option>
 			<option value="ottertext"<?php selected($val, 'ottertext'); ?>>OtterText</option>
+			<option value="aiq"      <?php selected($val, 'aiq'); ?>>AIQ</option>
 		</select>
 		<?php
 	}
@@ -543,15 +666,29 @@ class twwt_woo_settings_page {
 	public function ottertext_partner_callback(){
 		$this->options = get_option( 'twwt_woo_settings' );
 		$val = isset($this->options['ottertext_partner']) ? esc_attr($this->options['ottertext_partner']) : '';
-		echo '<input type="text" id="ottertext_partner" name="twwt_woo_settings[ottertext_partner]" value="'.$val.'" class="regular-text" />';
+		echo '<input type="text" id="ottertext_partner" name="twwt_woo_settings[ottertext_partner]" value="'.$val.'" class="regular-text" autocomplete="off" />';
 	}
-	/* ========================= */
+	public function aiq_api_key_callback(){
+		$this->options = get_option( 'twwt_woo_settings' );
+		$val = isset($this->options['aiq_api_key'])
+			? esc_attr($this->options['aiq_api_key'])
+			: '';
+
+		echo '<input type="password"
+			id="aiq_api_key"
+			name="twwt_woo_settings[aiq_api_key]"
+			value="'.$val.'"
+			class="regular-text"
+			autocomplete="off" />';
+
+		echo '<p class="description">Alpine IQ API key used for sending SMS.</p>';
+	}
 
 	public function twwt_woo_settings_email_template_header() {
-            echo '<p>'.__('Set Your Email Template here.', 'twwt_woo-settings').'</p>';
+            echo '<p>Configure the email subject and body for each notification type. Use the merge tags listed under each field to personalize your messages.</p>';
 	}
 	public function twwt_woo_settings_sms_content_header() {
-            echo '<p>'.__('Set Your SMS Text here.', 'twwt_woo-settings').'</p>';
+            echo '<p>Configure the SMS text for each notification type. Keep messages concise (160 characters recommended). Use the merge tags listed under each field.</p>';
 	}
 	public function randomGenerator_restrict_callback(){
 		if(isset( $this->options['randomGenerator_restrict'] ) && $this->options['randomGenerator_restrict'] == 1){
@@ -565,6 +702,7 @@ class twwt_woo_settings_page {
 		<option value="1"'.$yes.'>Yes</option>
 		<option value="0"'.$no.'>No</option>
 	</select>';
+	echo '<p class="description">When enabled, the random.org number generator is shown on the winner selection page to help pick a random seat.</p>';
 	}
 	public function winner_noto_others_callback(){
 		if(isset( $this->options['winner_noto_others'] ) && $this->options['winner_noto_others'] == 1){
@@ -578,6 +716,7 @@ class twwt_woo_settings_page {
 		<option value="1"'.$yes.'>Yes</option>
 		<option value="0"'.$no.'>No</option>
 	</select>';
+	echo '<p class="description">When enabled, all attendees (not just the winner) receive a notification when a winner is selected.</p>';
 	}
 	public function producttab_callback() {
 		if(isset( $this->options['producttab'] ) && $this->options['producttab'] == 1){
@@ -591,6 +730,7 @@ class twwt_woo_settings_page {
 		<option value="1"'.$yes.'>Yes</option>
 		<option value="0"'.$no.'>No</option>
 	</select>';
+	echo '<p class="description">Show a "Participants" tab on the webinar product page listing attendees and their seat numbers.</p>';
 	}
 	public function login_restrict_callback() {
 			if(isset( $this->options['login_restrict'] ) && $this->options['login_restrict'] == 1){
@@ -604,9 +744,11 @@ class twwt_woo_settings_page {
 			<option value="1"'.$yes.'>Yes</option>
 			<option value="0"'.$no.'>No</option>
 		</select>';
+		echo '<p class="description">When enabled, only logged-in users can view and purchase webinar seats. Guests see a login prompt.</p>';
 	}
 	public function login_button_text_callback(){
-		echo '<input type="text" id="login_button_text" name="twwt_woo_settings[login_button_text]" size="50" value="'.$this->options['login_button_text'].'" />';
+		echo '<input type="text" id="login_button_text" name="twwt_woo_settings[login_button_text]" size="50" value="'.esc_attr($this->options['login_button_text']).'" autocomplete="off" />';
+		echo '<p class="description">Text shown on the login button when login restriction is enabled.</p>';
 	}
 	public function winner_callback(){
 		if(isset( $this->options['winner'] ) && $this->options['winner'] == 1){
@@ -620,6 +762,7 @@ class twwt_woo_settings_page {
 			<option value="1"'.$yes.'>Yes</option>
 			<option value="0"'.$no.'>No</option>
 		</select>';
+		echo '<p class="description">Enable the "Select Attendee" button on product pages and the winner selection page for raffles.</p>';
 	}
 	public function enable_notification_callback(){
 		if(isset( $this->options['enable_notification'] ) && $this->options['enable_notification'] == 1){
@@ -633,8 +776,8 @@ class twwt_woo_settings_page {
 			<option value="1"'.$yes.'>Yes</option>
 			<option value="0"'.$no.'>No</option>
 		</select>';
+		echo '<p class="description">Master switch for all email and SMS notifications. When disabled, no notifications are sent.</p>';
 	}
-	// Notification mode callback
 	public function notification_mode_callback() {
 		$this->options = get_option( 'twwt_woo_settings' );
 		$val = isset($this->options['notification_mode']) ? $this->options['notification_mode'] : 'immediate';
@@ -644,13 +787,11 @@ class twwt_woo_settings_page {
 		<?php
 	}
 
-	// Notification batch time callback (shows current WP site time and next scheduled run)
 	public function notification_batch_time_callback() {
 		$this->options = get_option( 'twwt_woo_settings' );
 		$val = isset($this->options['notification_batch_time']) ? esc_attr($this->options['notification_batch_time']) : '09:00';
 		$mode = isset($this->options['notification_mode']) ? $this->options['notification_mode'] : 'immediate';
 
-		// Determine WP timezone object & label
 		$tz_string = get_option( 'timezone_string' );
 		if ( function_exists('wp_timezone') ) {
 			$tz = wp_timezone();
@@ -658,11 +799,9 @@ class twwt_woo_settings_page {
 			$tz = new DateTimeZone( $tz_string ? $tz_string : ( get_option('gmt_offset', 0) ? 'UTC' : 'UTC' ) );
 		}
 
-		// Current site time
 		$now = new DateTime('now', $tz);
 		$now_label = $now->format('Y-m-d H:i:s');
 
-		// Determine timezone label for display
 		if ( empty( $tz_string ) ) {
 			$offset = $tz->getOffset( $now );
 			$sign = $offset >= 0 ? '+' : '-';
@@ -670,7 +809,6 @@ class twwt_woo_settings_page {
 			$offset_minutes = ( abs( $offset ) % 3600 ) / 60;
 			$tz_label = sprintf('UTC%s%02d:%02d', $sign, $offset_hours, $offset_minutes);
 		} else {
-			// show timezone string and current offset
 			$offset = $tz->getOffset( $now );
 			$sign = $offset >= 0 ? '+' : '-';
 			$offset_hours = floor( abs( $offset ) / 3600 );
@@ -678,20 +816,15 @@ class twwt_woo_settings_page {
 			$tz_label = sprintf('%s (UTC%s%02d:%02d)', $tz_string, $sign, $offset_hours, $offset_minutes);
 		}
 
-		// Render the time input
 		echo '<input type="time" id="notification_batch_time" name="twwt_woo_settings[notification_batch_time]" value="' . $val . '" />';
 
-		// Show current site time & timezone
 		echo '<p class="description">Current site time (' . esc_html( $tz_label ) . '): <strong>' . esc_html( $now_label ) . '</strong></p>';
 
-		// If daily mode selected, show next scheduled run computed from chosen HH:MM
 		if ( $mode === 'daily' ) {
-			// compute next run based on selected HH:MM in site timezone
 			if ( preg_match('/^(\d{2}):(\d{2})$/', $val, $m) ) {
 				$hour = intval($m[1]);
 				$minute = intval($m[2]);
 
-				// Create DateTime for next occurrence in site tz
 				$next = new DateTime('now', $tz);
 				$next->setTime($hour, $minute, 0);
 				if ( $next <= $now ) {
@@ -705,10 +838,8 @@ class twwt_woo_settings_page {
 				echo '<p class="description">Batch time format is invalid; use HH:MM.</p>';
 			}
 
-			// Also show actual wp_next_scheduled value if exists (useful after saving)
 			$scheduled_ts = wp_next_scheduled('twwt_daily_batch_hook');
 			if ( $scheduled_ts ) {
-				// convert scheduled timestamp to site timezone for display
 				$dt_scheduled = new DateTime('@' . $scheduled_ts);
 				$dt_scheduled->setTimezone($tz);
 				echo '<p class="description">WP-Cron next-scheduled run for <code>twwt_daily_batch_hook</code>: <strong>' . esc_html( $dt_scheduled->format('Y-m-d H:i:s') ) . '</strong> (site timezone)</p>';
@@ -722,6 +853,12 @@ class twwt_woo_settings_page {
 		}
 	}
 
+	public function seat_hold_minutes_callback(){
+		$this->options = get_option( 'twwt_woo_settings' );
+		$val = isset($this->options['seat_hold_minutes']) ? intval($this->options['seat_hold_minutes']) : 10;
+		echo '<input type="number" id="seat_hold_minutes" name="twwt_woo_settings[seat_hold_minutes]" value="' . esc_attr($val) . '" min="1" max="120" step="1" style="width:80px;" />';
+		echo '<p class="description">How long (in minutes) a seat is held in the cart before it is released. Minimum 1 minute, default 10.</p>';
+	}
 	public function video_show_callback(){
 		if(isset( $this->options['video_show'] ) && $this->options['video_show'] == 1){
 			$yes = ' selected="selected"';
@@ -734,6 +871,7 @@ class twwt_woo_settings_page {
 			<option value="1"'.$yes.'>To All</option>
 			<option value="0"'.$no.'>Purchased Customer</option>
 		</select>';
+		echo '<p class="description">Controls who can see webinar replay videos. "To All" shows videos publicly; "Purchased Customer" restricts them to customers who bought the webinar.</p>';
 	}
 	public function bootstrap_show_callback(){
 		if(isset( $this->options['bootstrap_show'] ) && $this->options['bootstrap_show'] == 1){
@@ -747,161 +885,100 @@ class twwt_woo_settings_page {
 			<option value="1"'.$yes.'>Yes</option>
 			<option value="0"'.$no.'>No</option>
 		</select>';
+		echo '<p class="description">Load Bootstrap CSS/JS on the winner selection page. Disable if your theme already includes Bootstrap or if it causes style conflicts.</p>';
 		wp_enqueue_style( 'twwt_woo_date', plugins_url('asset/css/jquery-ui.min.css',__FILE__ ), array(), TWWT_VERSION );
 		wp_enqueue_style( 'twwt_woo_time', plugins_url('asset/css/jquery-ui-timepicker-addon.min.css',__FILE__ ), array(), TWWT_VERSION );
 		wp_enqueue_script( 'twwt_woo_timepicker', plugins_url('asset/js/jquery-ui-timepicker-addon.min.js',__FILE__ ), array('jquery'), TWWT_VERSION, true );
 	}
-	public function enable_livestrom_callback(){
-		if(isset( $this->options['enable_livestrom'] ) && $this->options['enable_livestrom'] == 1){
-			$yes = ' selected="selected"';
-			$no = '';
-		} else {
-			$yes = '';
-			$no = ' selected="selected"';
-		}
-		echo '<select id="enable_livestrom" name="twwt_woo_settings[enable_livestrom]">
-			<option value="1"'.$yes.'>Yes</option>
-			<option value="0"'.$no.'>No</option>
-		</select>';
-	}
-	public function token_callback(){
-		echo '<input type="password" id="token" name="twwt_woo_settings[token]" value="'.$this->options['token'].'" style="width:100%;" />';
-	}
-	public function owner_id_callback(){
-		echo '<input type="text" id="owner_id" name="twwt_woo_settings[owner_id]" size="50" value="'.$this->options['owner_id'].'" />';
-	}
-	public function copy_from_event_id_callback(){
-		echo '<input type="text" id="copy_from_event_id" name="twwt_woo_settings[copy_from_event_id]" size="50" value="'.$this->options['copy_from_event_id'].'" />';
-	}
 	public function twilio_sid_callback(){
-		echo '<input type="text" id="twilio_sid" name="twwt_woo_settings[twilio_sid]" size="50" value="'.$this->options['twilio_sid'].'" />';
+		echo '<input type="text" id="twilio_sid" name="twwt_woo_settings[twilio_sid]" size="50" value="'.esc_attr($this->options['twilio_sid']).'" autocomplete="off" />';
+		echo '<p class="description">Your Twilio Account SID, found on the Twilio Console dashboard.</p>';
 	}
 	public function twilio_token_callback(){
-		echo '<input type="text" id="twilio_token" name="twwt_woo_settings[twilio_token]" size="50" value="'.$this->options['twilio_token'].'" />';
+		echo '<input type="text" id="twilio_token" name="twwt_woo_settings[twilio_token]" size="50" value="'.esc_attr($this->options['twilio_token']).'" autocomplete="off" />';
+		echo '<p class="description">Your Twilio Auth Token, found on the Twilio Console dashboard.</p>';
 	}
 	public function twilio_from_callback(){
-		echo '<input type="text" id="twilio_from" name="twwt_woo_settings[twilio_from]" size="50" value="'.$this->options['twilio_from'].'" />';
+		echo '<input type="text" id="twilio_from" name="twwt_woo_settings[twilio_from]" size="50" value="'.esc_attr($this->options['twilio_from']).'" autocomplete="off" />';
+		echo '<p class="description">The Twilio phone number to send SMS from (e.g. +15551234567).</p>';
 	}
-	//email template
+
 	public function new_product_notification_sub_callback(){
-		// Description for the field
-		echo '<p>Enter the subject for the new product notification. You can use placeholders like <b>%first_name%</b>, <b>%product_name%</b>, and <b>%url%</b>.</p><p></p><p></p>';
-		echo '<input type="text" id="new_product_notification_sub" name="twwt_woo_settings[new_product_notification_sub]" size="180" value="'.$this->options['new_product_notification_sub'].'" />';
+		echo '<p class="description">Sent to all customers when a new webinar product is published.<br>Available merge tags: <b>%first_name%</b>, <b>%product_name%</b>, <b>%url%</b></p>';
+		echo '<input type="text" id="new_product_notification_sub" name="twwt_woo_settings[new_product_notification_sub]" size="180" autocomplete="off" value="'.esc_attr($this->options['new_product_notification_sub']).'" />';
 	}
 	public function new_product_notification_callback() {
-		$content = $this->options['new_product_notification']; // Retrieve the saved content
+		$content = $this->options['new_product_notification'];
 
-		$editor_id = 'new_product_notification'; // Unique editor ID
+		$editor_id = 'new_product_notification';
 
-        // Description for the field
-		echo '<p>Enter the email body for the new product notification. You can use placeholders like <b>%first_name%</b>, <b>%product_name%</b>, and <b>%url%</b>.</p><p></p><p></p>';
-		// Arguments for wp_editor()
+		echo '<p class="description">Email body sent to all customers when a new webinar is published.<br>Available merge tags: <b>%first_name%</b> (customer first name), <b>%product_name%</b> (webinar title), <b>%url%</b> (link to the webinar product page)</p>';
 		$settings = array(
 			'textarea_name' => 'twwt_woo_settings[new_product_notification]',
-			'textarea_rows' => 10, // Adjust the number of rows as needed
+			'textarea_rows' => 10,
 		);
 
-		// Output the WYSIWYG editor
 		wp_editor($content, $editor_id, $settings);
 	}
 	public function wwinner_notification_sub_callback(){
-		// Description for the field
-		echo '<p>Enter the subject for the winner notification to winner. You can use placeholders like <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%screen_name%</b> and <b>%phone%</b>.</p><p></p><p></p>';
-		echo '<input type="text" id="wwinner_notification_sub" name="twwt_woo_settings[wwinner_notification_sub]" size="180" value="'.$this->options['wwinner_notification_sub'].'" />';
+		echo '<p class="description">Sent to the selected winner when they are chosen from the winner selection page.<br>Available merge tags: <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%screen_name%</b>, <b>%phone%</b></p>';
+		echo '<input type="text" id="wwinner_notification_sub" name="twwt_woo_settings[wwinner_notification_sub]" size="180" autocomplete="off" value="'.esc_attr($this->options['wwinner_notification_sub']).'" />';
 	}
 	public function wwinner_notification_callback() {
-		$content1 = $this->options['wwinner_notification']; // Retrieve the saved content
+		$content1 = $this->options['wwinner_notification'];
 
-		$editor_id1 = 'wwinner_notification'; // Unique editor ID
-		
-		// Description for the field
-		echo '<p>Enter the email body for the winner notification to winner. You can use placeholders like <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%screen_name%</b> and <b>%phone%</b>.</p><p></p><p></p>';
+		$editor_id1 = 'wwinner_notification';
 
-		// Arguments for wp_editor()
+		echo '<p class="description">Email body sent to the winner.<br>Available merge tags: <b>%first_name%</b> (winner first name), <b>%last_name%</b> (winner last name), <b>%product_name%</b> (webinar title), <b>%screen_name%</b> (winner display name), <b>%phone%</b> (winner phone)</p>';
+
 		$settings1 = array(
 			'textarea_name' => 'twwt_woo_settings[wwinner_notification]',
-			'textarea_rows' => 10, // Adjust the number of rows as needed
+			'textarea_rows' => 10,
 		);
-
-		// Output the WYSIWYG editor
 		wp_editor($content1, $editor_id1, $settings1);
 	}
 	public function winner_noti_others_sub_callback(){
-		// Description for the field
-		echo '<p>Enter the subject for the winner notification to others. You can use placeholders like <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%screen_name%</b> and <b>%phone%</b>.</p><p></p><p></p>';
-		echo '<input type="text" id="winner_noti_others_sub" name="twwt_woo_settings[winner_noti_others_sub]" size="180" value="'.$this->options['winner_noti_others_sub'].'" />';
+		echo '<p class="description">Sent to all other attendees (non-winners) when a winner is selected. Requires "Winner Notification to Others" to be enabled.<br>Available merge tags: <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%screen_name%</b> (winner screen name), <b>%phone%</b></p>';
+		echo '<input type="text" id="winner_noti_others_sub" name="twwt_woo_settings[winner_noti_others_sub]" size="180" autocomplete="off" value="'.esc_attr($this->options['winner_noti_others_sub']).'" />';
 	}
 	public function winner_noti_others_callback() {
-		$content2 = $this->options['winner_noti_others']; // Retrieve the saved content
+		$content2 = $this->options['winner_noti_others'];
 
-		$editor_id2 = 'winner_noti_others'; // Unique editor ID
-		
-		// Description for the field
-		echo '<p>Enter the email body for the winner notification to others. You can use placeholders like <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%screen_name%</b> and <b>%phone%</b>.</p><p></p><p></p>';
+		$editor_id2 = 'winner_noti_others';
+		echo '<p class="description">Email body sent to all other attendees when a winner is selected.<br>Available merge tags: <b>%first_name%</b> (attendee first name), <b>%last_name%</b> (attendee last name), <b>%product_name%</b> (webinar title), <b>%screen_name%</b> (winner display name), <b>%phone%</b></p>';
 
-		// Arguments for wp_editor()
 		$settings2 = array(
 			'textarea_name' => 'twwt_woo_settings[winner_noti_others]',
-			'textarea_rows' => 10, // Adjust the number of rows as needed
+			'textarea_rows' => 10,
 		);
 
-		// Output the WYSIWYG editor
 		wp_editor($content2, $editor_id2, $settings2);
 	}
 	public function ezoom_notification_sub_callback(){
-		// Description for the field
-		echo '<p>Enter the subject for the winner notification to others. You can use placeholders like <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%event_url%</b> and <b>%event_time%</b>.</p><p></p><p></p>';
-		echo '<input type="text" id="ezoom_notification_sub" name="twwt_woo_settings[ezoom_notification_sub]" size="180" value="'.$this->options['ezoom_notification_sub'].'" />';
+		echo '<p class="description">Sent to all attendees when the admin triggers the Zoom/event notification from the product edit page.<br>Available merge tags: <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%event_url%</b>, <b>%event_time%</b></p>';
+		echo '<input type="text" id="ezoom_notification_sub" name="twwt_woo_settings[ezoom_notification_sub]" size="180" autocomplete="off" value="'.esc_attr($this->options['ezoom_notification_sub']).'" />';
 	}
 	public function ezoom_notification_callback() {
-		$content3 = $this->options['ezoom_notification']; // Retrieve the saved content
+		$content3 = $this->options['ezoom_notification'];
 
-		$editor_id3 = 'ezoom_notification'; // Unique editor ID
-        
-		// Description for the field
-		echo '<p>Enter the email body for the Zoom notification. You can use placeholders like <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%event_url%</b> and <b>%event_time%</b>.</p><p></p><p></p>';
-		
-		// Arguments for wp_editor()
+		$editor_id3 = 'ezoom_notification';
+		echo '<p class="description">Email body sent to attendees with the event/Zoom joining details.<br>Available merge tags: <b>%first_name%</b> (attendee first name), <b>%last_name%</b> (attendee last name), <b>%product_name%</b> (webinar title), <b>%event_url%</b> (Zoom/meeting link), <b>%event_time%</b> (scheduled event time)</p>';
 		$settings3 = array(
 			'textarea_name' => 'twwt_woo_settings[ezoom_notification]',
-			'textarea_rows' => 10, // Adjust the number of rows as needed
+			'textarea_rows' => 10,
 		);
 
-		// Output the WYSIWYG editor
 		wp_editor($content3, $editor_id3, $settings3);
 	}
-	public function elivestrom_notification_sub_callback(){
-		// Description for the field
-		echo '<p>Enter the subject for the Livestrom notification. You can use placeholders like <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%event_name%</b> and <b>%event_time%</b>.</p><p></p><p></p>';
-		echo '<input type="text" id="elivestrom_notification_sub" name="twwt_woo_settings[elivestrom_notification_sub]" size="180" value="'.$this->options['elivestrom_notification_sub'].'" />';
-	}
-	public function elivestrom_notification_callback() {
-		$content4 = $this->options['elivestrom_notification']; // Retrieve the saved content
-
-		$editor_id4 = 'elivestrom_notification'; // Unique editor ID
-		
-		// Description for the field
-		echo '<p>Enter the email body for the Livestrom notification. You can use placeholders like <b>%first_name%</b>, <b>%last_name%</b>, <b>%product_name%</b>, <b>%event_name%</b>, <b>%event_time%</b> and <b>%product_url%</b>.</p><p></p><p></p>';
-
-		// Arguments for wp_editor()
-		$settings4 = array(
-			'textarea_name' => 'twwt_woo_settings[elivestrom_notification]',
-			'textarea_rows' => 10, // Adjust the number of rows as needed
-		);
-
-		// Output the WYSIWYG editor
-		wp_editor($content4, $editor_id4, $settings4);
-	}
-
 	public function batch_new_product_notification_sub_callback() {
-		echo '<p>Email subject for daily batch webinar notifications.</p>';
+		echo '<p class="description">Subject line for the daily batch email that groups all new webinars published that day into a single message.<br>Available merge tags: <b>%first_name%</b></p>';
 		echo '<input type="text" size="180"
 			name="twwt_woo_settings[batch_new_product_notification_sub]"
 			value="'. esc_attr($this->options['batch_new_product_notification_sub']) .'" />';
 	}
 
 	public function batch_new_product_notification_callback() {
-		echo '<p>Available placeholders: <b>%first_name%</b>, <b>%webinar_list%</b></p>';
+		echo '<p class="description">Email body for the daily batch notification. Only used when Notification Mode is set to "Daily batch".<br>Available merge tags: <b>%first_name%</b> (customer first name), <b>%webinar_list%</b> (HTML list of new webinar names and links)</p>';
 
 		wp_editor(
 			$this->options['batch_new_product_notification'],
@@ -913,31 +990,24 @@ class twwt_woo_settings_page {
 		);
 	}
 	
-	//SMS 
-	
 	public function sms_new_product_notification_callback(){
-		echo '<p>Enter the SMS Text for the new product notification. You can use placeholders like <b>%first_name%</b>, <b>%product_name%</b>, and <b>%url%</b>.</p><p></p><p></p>';
+		echo '<p class="description">SMS sent to all customers when a new webinar is published.<br>Merge tags: <b>%first_name%</b>, <b>%product_name%</b>, <b>%url%</b></p>';
 		echo '<textarea id="sms_new_product_notification" name="twwt_woo_settings[sms_new_product_notification]" rows="4" cols="180">' . esc_textarea($this->options['sms_new_product_notification']) . '</textarea>';
 	}
 	public function sms_wwinner_notification_callback(){
-		echo '<p>Enter the SMS Text for the winner notification to winner. You can use placeholders like <b>%first_name%</b>, <b>%product_name%</b>, and <b>%screen_name%</b>.</p><p></p><p></p>';
+		echo '<p class="description">SMS sent to the selected winner.<br>Merge tags: <b>%first_name%</b>, <b>%product_name%</b>, <b>%screen_name%</b></p>';
 		echo '<textarea id="sms_wwinner_notification" name="twwt_woo_settings[sms_wwinner_notification]" rows="4" cols="180">' . esc_textarea($this->options['sms_wwinner_notification']) . '</textarea>';
 	}
 	public function sms_winner_noti_others_callback(){
-		echo '<p>Enter the SMS Text for the winner notification to others. You can use placeholders like <b>%first_name%</b>, <b>%product_name%</b>, and <b>%screen_name%</b>.</p><p></p><p></p>';
+		echo '<p class="description">SMS sent to all other attendees when a winner is selected. Requires "Winner Notification to Others" to be enabled.<br>Merge tags: <b>%first_name%</b>, <b>%product_name%</b>, <b>%screen_name%</b> (winner display name)</p>';
 		echo '<textarea id="sms_winner_noti_others" name="twwt_woo_settings[sms_winner_noti_others]" rows="4" cols="180">' . esc_textarea($this->options['sms_winner_noti_others']) . '</textarea>';
 	}
 	public function sms_zoom_notification_callback(){
-		echo '<p>Enter the SMS Text for the Zoom notification. You can use placeholders like <b>%first_name%</b>, <b>%product_name%</b>, <b>%event_url%</b> and <b>%event_time%</b>.</p><p></p><p></p>';
+		echo '<p class="description">SMS sent to all attendees with event/Zoom details when the admin sends the Zoom notification.<br>Merge tags: <b>%first_name%</b>, <b>%product_name%</b>, <b>%event_url%</b>, <b>%event_time%</b></p>';
 		echo '<textarea id="sms_zoom_notification" name="twwt_woo_settings[sms_zoom_notification]" rows="4" cols="180">' . esc_textarea($this->options['sms_zoom_notification']) . '</textarea>';
 	}
-	public function sms_livestrom_notification_callback(){
-		echo '<p>Enter the SMS Text for the Livestrom event notification. You can use placeholders like <b>%first_name%</b>, <b>%event_name%</b>, and <b>%product_url%</b>.</p><p></p><p></p>';
-		echo '<textarea id="sms_livestrom_notification" name="twwt_woo_settings[sms_livestrom_notification]" rows="4" cols="180">' . esc_textarea($this->options['sms_livestrom_notification']) . '</textarea>';
-	}
 	public function sms_batch_new_product_notification_callback() {
-		echo '<p>Available placeholders:</p>
-			<p><b>%webinar_titles%</b>, <b>%url%</b></p>';
+		echo '<p class="description">SMS for the daily batch notification. Only used when Notification Mode is set to "Daily batch".<br>Merge tags: <b>%webinar_titles%</b> (comma-separated list of new webinar names), <b>%url%</b> (shop link)</p>';
 
 		echo '<textarea rows="4" cols="180"
 			name="twwt_woo_settings[sms_batch_new_product_notification]">' .
@@ -945,6 +1015,39 @@ class twwt_woo_settings_page {
 			'</textarea>';
 	}
 
+
+	// --- Winner Page Color Callbacks ---
+	public function twwt_woo_settings_winner_colors_header() {
+		echo '<p>Customize the colors used on the winner selection page. Use any valid hex color code.</p>';
+	}
+	public function winner_primary_color_callback() {
+		$this->options = get_option( 'twwt_woo_settings' );
+		$val = isset($this->options['winner_primary_color']) ? esc_attr($this->options['winner_primary_color']) : '#d63638';
+		echo '<input type="color" id="winner_primary_color" name="twwt_woo_settings[winner_primary_color]" value="' . $val . '" />';
+		echo '<code style="margin-left:8px;">' . $val . '</code>';
+		echo '<p class="description">Used for buttons, alert borders, and accent elements on the winner page.</p>';
+	}
+	public function winner_primary_hover_callback() {
+		$this->options = get_option( 'twwt_woo_settings' );
+		$val = isset($this->options['winner_primary_hover']) ? esc_attr($this->options['winner_primary_hover']) : '#b32d2f';
+		echo '<input type="color" id="winner_primary_hover" name="twwt_woo_settings[winner_primary_hover]" value="' . $val . '" />';
+		echo '<code style="margin-left:8px;">' . $val . '</code>';
+		echo '<p class="description">Button hover/active state color on the winner page.</p>';
+	}
+	public function winner_table_header_bg_callback() {
+		$this->options = get_option( 'twwt_woo_settings' );
+		$val = isset($this->options['winner_table_header_bg']) ? esc_attr($this->options['winner_table_header_bg']) : '#f5f5f5';
+		echo '<input type="color" id="winner_table_header_bg" name="twwt_woo_settings[winner_table_header_bg]" value="' . $val . '" />';
+		echo '<code style="margin-left:8px;">' . $val . '</code>';
+		echo '<p class="description">Background color for the attendee table header row.</p>';
+	}
+	public function winner_button_text_callback() {
+		$this->options = get_option( 'twwt_woo_settings' );
+		$val = isset($this->options['winner_button_text']) ? esc_attr($this->options['winner_button_text']) : '#ffffff';
+		echo '<input type="color" id="winner_button_text" name="twwt_woo_settings[winner_button_text]" value="' . $val . '" />';
+		echo '<code style="margin-left:8px;">' . $val . '</code>';
+		echo '<p class="description">Text color for buttons on the winner page.</p>';
+	}
 
 	public function default_webinar_category_callback() {
 		$this->options = get_option('twwt_woo_settings');
@@ -971,16 +1074,14 @@ class twwt_woo_settings_page {
 		echo '<p class="description">This category will be pre-selected when adding a new webinar.</p>';
 	}
 
-    //  submenu setting heading  
     public function licence_section_info() {
         echo '<p>Enter your license key below:</p>';
     }
 
-   //  submenu setting licene field  
     public function license_key_callback() {
     	$this->options = get_option('twwt_plugin_license_options'); 
         $license_status = '';
-        $license_key = isset($this->options['twwt_plugin_license_key']) ? esc_attr($this->options['twwt_plugin_license_key']) : '';
+        $license_key = isset($this->options['twwt_plugin_license_key']) ? sanitize_text_field($this->options['twwt_plugin_license_key']) : '';
         if (!empty($license_key)) {
             $license_status = $this->twwt_license_key_valid() ? 'Valid' : 'Invalid';
         }
@@ -988,27 +1089,49 @@ class twwt_woo_settings_page {
         echo '<span style="font-weight: bold; color: ' . ($license_status === 'Valid' ? 'green' : 'red') . ';"> ' . $license_status . '</span>';
     }
 
-	// submenu setting licene validation  
 	public function twwt_license_key_valid() {
-		$this->options = get_option('twwt_plugin_license_options'); 
-        $localKey = get_option('twwt_plugin_local_key', '');
-        $license_key = isset($this->options['twwt_plugin_license_key']) ? esc_attr($this->options['twwt_plugin_license_key']) : '';
-        $results = $this->firearm_check_license($license_key, $localKey);
-        if ($results['status'] == 'Active') {
-            update_option('twwt_plugin_local_key', $results['localkey']);
-            return true;
-        } else {
-            return false;
-        }
+
+    $cached = get_transient('twwt_license_valid_cache');
+
+    if ($cached === 'yes') {
+        return true;
     }
 
-	// submenu check status of licence key and local key 
+    if ($cached === 'no') {
+        return false;
+    }
+
+    $this->options = get_option('twwt_plugin_license_options');
+    $localKey = get_option('twwt_plugin_local_key', '');
+    $license_key = isset($this->options['twwt_plugin_license_key'])
+        ? sanitize_text_field($this->options['twwt_plugin_license_key'])
+        : '';
+
+    $results = $this->firearm_check_license($license_key, $localKey);
+
+    if ($results['status'] == 'Active') {
+        update_option('twwt_plugin_local_key', $results['localkey']);
+
+        set_transient('twwt_license_valid_cache', 'yes', DAY_IN_SECONDS);
+
+        return true;
+    } else {
+
+        set_transient('twwt_license_valid_cache', 'no', DAY_IN_SECONDS);
+
+        return false;
+    }
+}
+
+public function twwt_license_invalidate_cache() {
+    delete_transient('twwt_license_valid_cache');
+}
+
 	public function firearm_check_license($licensekey, $localkey='') {
 	    $whmcsurl = 'https://hosting.gigapress.net/';
-	    //$whmcsurl = 'https://test.jytfvty.biz/';
 	    $licensing_secret_key = 'smcreative';
-	    $localkeydays = 15;
-	    $allowcheckfaildays = 5;
+	    $localkeydays = 1;
+	    $allowcheckfaildays = 1;
 	    $check_token = time() . md5(mt_rand(1000000000, 9999999999) . $licensekey);
 	    $checkdate = date("Ymd");
 	    $domain = $_SERVER['SERVER_NAME'];
@@ -1020,14 +1143,20 @@ class twwt_woo_settings_page {
 	        $localkey = str_replace("\n", '', $localkey);
 	        $localdata = substr($localkey, 0, strlen($localkey) - 32);
 	        $md5hash = substr($localkey, strlen($localkey) - 32);
-	        if ($md5hash == md5($localdata . $licensing_secret_key)) {
-	            $localdata = strrev($localdata); 
-	            $md5hash = substr($localdata, 0, 32); 
-	            $localdata = substr($localdata, 32); 
+	        if (hash_equals(md5($localdata . $licensing_secret_key), $md5hash)) {
+	            $localdata = strrev($localdata);
+	            $md5hash = substr($localdata, 0, 32);
+	            $localdata = substr($localdata, 32);
 	            $localdata = base64_decode($localdata);
-	            $localkeyresults = unserialize($localdata);
-	            $originalcheckdate = $localkeyresults['checkdate'];
-	            if ($md5hash == md5($originalcheckdate . $licensing_secret_key)) {
+	            $localkeyresults = json_decode($localdata, true);
+	            if ( ! is_array($localkeyresults) ) {
+	                $localkeyresults = @unserialize($localdata);
+	            }
+	            if ( ! is_array($localkeyresults) ) {
+	                $localkeyresults = array();
+	            }
+	            $originalcheckdate = isset($localkeyresults['checkdate']) ? $localkeyresults['checkdate'] : '';
+	            if (hash_equals(md5($originalcheckdate . $licensing_secret_key), $md5hash)) {
 	                $localexpiry = date("Ymd", mktime(0, 0, 0, date("m"), date("d") - $localkeydays, date("Y")));
 	                if ($originalcheckdate > $localexpiry) {
 	                    $localkeyvalid = true;
@@ -1055,6 +1184,7 @@ class twwt_woo_settings_page {
 	        }
 	    }
 	    if (!$localkeyvalid) {
+			error_log('TWWT LICENSE: Remote WHMCS check triggered at ' . current_time('mysql'));
 	        $postfields = array(
 	            'licensekey' => $licensekey,
 	            'domain' => $domain,
@@ -1098,6 +1228,7 @@ class twwt_woo_settings_page {
 	        }
 	        if (!$data) {
 	            $localexpiry = date("Ymd", mktime(0, 0, 0, date("m"), date("d") - ($localkeydays + $allowcheckfaildays), date("Y")));
+				$originalcheckdate = isset($originalcheckdate) ? $originalcheckdate : 0;
 	            if ($originalcheckdate > $localexpiry) {
 	                $results = $localkeyresults;
 	            } else {
@@ -1114,9 +1245,9 @@ class twwt_woo_settings_page {
 	            }
 	        }
 	        if (!is_array($results)) {
-	            die("Invalid License Server Response");
+	            return array('status' => 'Invalid', 'description' => 'Invalid License Server Response');
 	        }
-	        if ($results['md5hash']) {
+	        if (!empty($results['md5hash'])) {
 	            if ($results['md5hash'] != md5($licensing_secret_key . $check_token)) {
 	                $results['status'] = "Invalid";
 	                $results['description'] = "MD5 Checksum Verification Failed";
@@ -1125,7 +1256,7 @@ class twwt_woo_settings_page {
 	        }
 	        if ($results['status'] == "Active") {
 	            $results['checkdate'] = $checkdate;
-	            $data_encoded = serialize($results);
+	            $data_encoded = wp_json_encode($results);
 	            $data_encoded = base64_encode($data_encoded);
 	            $data_encoded = md5($checkdate . $licensing_secret_key) . $data_encoded;
 	            $data_encoded = strrev($data_encoded);
@@ -1140,10 +1271,13 @@ class twwt_woo_settings_page {
 	}
 }
 
-// When the options array is updated, reschedule the daily batch
+add_action('update_option_twwt_plugin_license_options', function () {
+    delete_transient('twwt_license_valid_cache');
+});
+
+
 add_action('update_option_twwt_woo_settings', 'twwt_reschedule_on_option_change', 10, 3);
 function twwt_reschedule_on_option_change($old_value, $value, $option_name) {
-    // $value is the new settings array. We only care if notification settings changed.
     if (function_exists('twwt_schedule_daily_batch')) {
         twwt_schedule_daily_batch();
     }

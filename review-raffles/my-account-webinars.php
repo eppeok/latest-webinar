@@ -39,8 +39,8 @@ foreach ($customer_orders as $customer_order) {
 		if(!in_array($product_id, $removed_videos)){
 			
 			$woo_seat_show = get_post_meta( $product_id, 'woo_seat_show', true );
-			$woo_seat_video = get_post_meta( $product_id, 'woo_seat_video', true );
-			if($woo_seat_show==1 && $woo_seat_video!=""){
+			$event_video_url = get_post_meta( $product_id, '_event_name', true );
+			if($woo_seat_show==1 && $event_video_url!=""){
 				$product_ids[] = $product_id;
 			}
 		}
@@ -60,13 +60,13 @@ if(!empty($product_ids)){
     <?php
 	foreach($product_ids as $product_id){
 		$product = wc_get_product( $product_id );
-		$woo_seat_video = get_post_meta( $product_id, 'woo_seat_video', true );
+		$event_video_url = get_post_meta( $product_id, '_event_name', true );
 		?>
     <tr>
       <td class="woocommerce-webinars-table__cell woocommerce-webinars-table__cell-webinar-name" data-title="Webinar Name">
-	  <?php echo '#'.$product_id;?> 
+	  <?php echo '#'.$product_id;?>
 	  <?php echo $product->get_title();?></td>
-      <td class="woocommerce-webinars-table__cell woocommerce-webinars-table__cell-webinar-actions" data-title="Actions"><a href="<?php echo $woo_seat_video;?>" target="_blank" class="woocommerce-button button view">Play Video</a>&nbsp;	&nbsp; <a href="#" class="woocommerce-button button alt remove-webinar-video" data-id="<?php echo $product_id;?>">Remove</a></td>
+      <td class="woocommerce-webinars-table__cell woocommerce-webinars-table__cell-webinar-actions" data-title="Actions"><a href="<?php echo esc_url($event_video_url);?>" target="_blank" class="woocommerce-button button view">Play Video</a>&nbsp;	&nbsp; <a href="#" class="woocommerce-button button alt remove-webinar-video" data-id="<?php echo $product_id;?>">Remove</a></td>
     </tr>
     <?php
 	}

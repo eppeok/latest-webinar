@@ -4,7 +4,7 @@
   /******************************************************************
    * CONFIG
    ******************************************************************/
-  var HOLD_MINUTES = 10;            // Seat hold duration
+  var HOLD_MINUTES = (typeof twwtfa !== 'undefined' && twwtfa.hold_minutes) ? parseInt(twwtfa.hold_minutes, 10) : 10;
   var HOLD_MS = HOLD_MINUTES * 60 * 1000;
 
   /******************************************************************
@@ -69,7 +69,17 @@
       $('ul.my-tickets.de-active .ticket-box').prop('checked', false);
     }, 10);
     var _atr = $ele.data("value");
-    $("#pa_seat").val(_atr).change();
+    var vid = $ele.data("vid");
+
+    // Set the variation attribute dropdown (try taxonomy, then custom, then any)
+    var $select = $("#pa_seat");
+    if (!$select.length) $select = $("#seat");
+    if (!$select.length) $select = $("form.variations_form select[name^='attribute_']").first();
+    $select.val(_atr).change();
+
+    // Directly set variation_id so WooCommerce knows which variation to add
+    $("input[name='variation_id'], input.variation_id").val(vid);
+
     $("input[name=quantity]").val(_ckdln).change();
   }
 
@@ -259,6 +269,11 @@
             setTimeout(function () { $(".availabilitycheck-msg").html('').hide(); }, 3000);
             as_reset($ele);
           }
+
+          // Trigger immediate poll so other users' changes show up right away
+          if (typeof window.twwtPollSeats === 'function') {
+            setTimeout(window.twwtPollSeats, 500);
+          }
         });
 
       } else {
@@ -288,15 +303,54 @@
         }
       }
 
-      var $btn = $(".single_add_to_cart_button");
-      if ($btn.length) {
-        $btn.trigger('click');  // should be non-AJAX for webinars per your PHP filter
-        console.log('DEBUG: Triggered .single_add_to_cart_button click');
-      } else if ($('form.cart').length) {
-        $('form.cart').trigger('submit');
-        console.log('DEBUG: Submitted form.cart');
+      var $form = $('form.cart');
+      if ($form.length) {
+        // Get variation info from the checked ticket boxes
+        var $checked = $('input.ticket-box:checked').first();
+        var checkedVid = $checked.length ? $checked.data('vid') : null;
+        var checkedAttr = $checked.length ? $checked.data('value') : null;
+
+        // Ensure variation_id hidden input exists and is set
+        // (WC may not render this input if product loaded as simple)
+        if (checkedVid) {
+          var $vidInput = $form.find('input[name="variation_id"]');
+          if (!$vidInput.length) {
+            $form.append('<input type="hidden" name="variation_id" value="' + checkedVid + '">');
+          } else {
+            $vidInput.val(checkedVid);
+          }
+        }
+
+        // Ensure attribute input exists (try common attribute names)
+        if (checkedAttr) {
+          var hasAttr = $form.find('select[name^="attribute_"], input[name^="attribute_"]').length;
+          if (!hasAttr) {
+            // Try pa_seat first, then seat
+            var attrName = 'attribute_pa_seat';
+            if ($('#seat').length || !$('#pa_seat').length) {
+              attrName = 'attribute_seat';
+            }
+            $form.append('<input type="hidden" name="' + attrName + '" value="' + checkedAttr + '">');
+          }
+        }
+
+        // Ensure add-to-cart hidden input exists (needed for native form submit)
+        var productId = $form.data('product_id')
+          || $form.find('input[name="product_id"]').val()
+          || $(".single_add_to_cart_button").val();
+        if (productId && !$form.find('input[type="hidden"][name="add-to-cart"]').length) {
+          $form.append('<input type="hidden" name="add-to-cart" value="' + productId + '">');
+        }
+        // Ensure product_id hidden input exists
+        if (productId && !$form.find('input[name="product_id"]').length) {
+          $form.append('<input type="hidden" name="product_id" value="' + productId + '">');
+        }
+
+        // Native submit bypasses WooCommerce's add-to-cart-variation.js validation
+        $form[0].submit();
+        console.log('DEBUG: Native form.cart submit, vid=' + checkedVid);
       } else {
-        console.warn('DEBUG: No add-to-cart button or form found.');
+        console.warn('DEBUG: No form.cart found.');
       }
     });
 
@@ -348,10 +402,17 @@
       var _seat = $("input[name=rbtnseats]:checked").val();
       $("#wsnm").html($("#wsnm_" + _seat).html());
       $("#wsnmst").html(_seat);
-      $.get('?myaction=selectwinner&pid=' + _pid + '&oid=' + _oid + '&seat=' + _seat, function (data) {
+      var _nonce = $("#tw_winner_nonce").val();
+      $.get('?myaction=selectwinner&pid=' + _pid + '&oid=' + _oid + '&seat=' + _seat + '&_wpnonce=' + _nonce)
+      .done(function (data) {
         $("#btn_select_winnerf").remove();
         $("input[name=rbtnseats]").attr('disabled', 'disabled');
         $('#sbWinner').show();
+      })
+      .fail(function () {
+        alert('Failed to select winner. Please reload the page and try again.');
+        $("#btn_select_winnerf").removeAttr('disabled');
+        $("#btn_select_winnerf span").html('Select a Winner');
       });
     });
 
@@ -360,6 +421,88 @@
       $('#sbWinner').hide();
       location.reload();
     });
+
+    /********************
+     * Live Seat Polling – update availability every 5s without full page reload
+     ********************/
+    var $dashboard = $('.ticket-dashboard[data-product-id]');
+    if ($dashboard.length && typeof twwtfa !== 'undefined' && twwtfa.ajaxurl) {
+      var pollProductId = $dashboard.data('product-id');
+      var POLL_INTERVAL = 5000; // 5 seconds
+      var pollInFlight = false;
+
+      function twwtPollSeats() {
+        if (pollInFlight) return; // skip if previous request still pending
+        pollInFlight = true;
+        $.getJSON(twwtfa.ajaxurl, { action: 'twwt_seat_status', product_id: pollProductId })
+          .always(function () { pollInFlight = false; })
+          .done(function (resp) {
+            if (!resp || !resp.success || !resp.data) return;
+
+            var data = resp.data; // { vid: { seats: {num: type}, total: N, available: N } }
+
+            $.each(data, function (vid, info) {
+              var seats = info.seats;
+
+              // Update each seat checkbox
+              $.each(seats, function (seatNum, type) {
+                var $cb = $('input.ticket-box[data-vid="' + vid + '"][value="' + seatNum + '"]');
+                if (!$cb.length) return;
+
+                // Never touch seats the current user has checked
+                if ($cb.is(':checked')) return;
+
+                if (type === 'perma') {
+                  $cb.prop('disabled', true)
+                     .removeClass('rbtn-tt-temp')
+                     .addClass('rbtn-tt-perma');
+                } else if (type === 'temp') {
+                  $cb.prop('disabled', true)
+                     .removeClass('rbtn-tt-perma')
+                     .addClass('rbtn-tt-temp');
+                } else {
+                  // Seat is now available – re-enable unless it's in the de-active group
+                  var inDeactive = $cb.closest('ul.my-tickets').hasClass('de-active');
+                  if (!inDeactive) {
+                    $cb.prop('disabled', false)
+                       .removeClass('rbtn-tt-perma rbtn-tt-temp');
+                  }
+                }
+              });
+
+              // Update "Available Seats: X/Y" text
+              var $seatList = $('ul.ticket-id-' + vid);
+              if ($seatList.length) {
+                var $availDiv = $seatList.closest('.rseat-container').find('.seat-available');
+                if ($availDiv.length) {
+                  $availDiv.html('<strong>Available Seats:</strong> ' + info.available + '/' + info.total);
+                }
+              }
+            });
+          });
+      }
+
+      // Expose globally so seat-selection handler can trigger an immediate poll
+      window.twwtPollSeats = twwtPollSeats;
+
+      // First poll shortly after page load, then every POLL_INTERVAL
+      setTimeout(twwtPollSeats, 2000);
+      setInterval(twwtPollSeats, POLL_INTERVAL);
+
+      // Immediate poll when page is restored from bfcache (back button)
+      $(window).on('pageshow', function (e) {
+        if (e.originalEvent && e.originalEvent.persisted) {
+          twwtPollSeats();
+        }
+      });
+
+      // Immediate poll when tab becomes visible again
+      $(document).on('visibilitychange', function () {
+        if (!document.hidden) {
+          twwtPollSeats();
+        }
+      });
+    }
 
   }); // ready
 
